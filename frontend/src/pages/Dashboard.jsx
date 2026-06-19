@@ -6,38 +6,50 @@ import VoiceQualityCard from '../components/VoiceQualityCard';
 import LatencyCard from '../components/LatencyCard';
 import AudioWaveformCard from '../components/AudioWaveformCard';
 import AlertPanel from '../components/AlertPanel';
-import { healthService, metricsService, audioService } from '../services/api';
+import NoiseSuppessionPanel from '../components/NoiseSuppessionPanel';
+import { useAudioWebSocket } from '../hooks/useAudioWebSocket';
+import { healthService } from '../services/api';
 
 const Dashboard = () => {
+  // System health (HTTP poll — backend online/offline check)
   const [systemStatus, setSystemStatus] = useState('loading');
-  const [metrics, setMetrics] = useState(null);
-  const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
 
+  // ── Real-time audio WebSocket hook ──────────────────────────────────────
+  const {
+    isConnected,
+    metrics,
+    suppressionEnabled,
+    toggleSuppression,
+    isRecording,
+    isProcessing,
+    beforeUrl,
+    afterUrl,
+    snrBefore,
+    snrAfter,
+    recordAndProcess,
+    resetComparison,
+    error: wsError,
+  } = useAudioWebSocket();
+
+  // ── Health check (HTTP) ─────────────────────────────────────────────────
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchHealth = async () => {
       try {
-        setLoading(true);
-        const [healthRes, metricsRes, alertsRes] = await Promise.all([
-          healthService.getHealth().catch(() => ({ data: { status: 'offline' } })),
-          metricsService.getMetrics(),
-          audioService.getAlerts()
-        ]);
-        setSystemStatus(healthRes.data.status);
-        setMetrics(metricsRes.data);
-        setAlerts(alertsRes.data);
-      } catch (err) {
+        const res = await healthService.getHealth().catch(() => ({ data: { status: 'offline' } }));
+        setSystemStatus(res.data.status);
+      } catch {
         setSystemStatus('offline');
-      } finally {
-        setLoading(false);
       }
     };
-    fetchData();
-    const interval = setInterval(fetchData, 30000);
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  if (loading && !metrics) {
+  // Show loading only on very first render before any metric arrives
+  const loading = metrics.noise_score === 0 && metrics.voice_clarity === 0 && !isConnected;
+
+  if (loading) {
     return (
       <div className="h-full flex items-center justify-center text-zinc-500 text-sm tracking-widest uppercase">
         Loading...
@@ -46,27 +58,57 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="h-full flex flex-col max-w-6xl mx-auto px-6 py-8">
-      <DashboardHeader systemStatus={systemStatus} />
+    <div className="h-full flex flex-col max-w-6xl mx-auto px-6 py-8 overflow-y-auto">
+      <DashboardHeader systemStatus={isConnected ? 'online' : systemStatus} />
 
-      <div className="flex-1 min-h-0 flex flex-col gap-6">
-        {/* KPI Cards */}
+      {/* WebSocket error banner */}
+      {wsError && (
+        <div className="mb-4 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 shrink-0">
+          ⚠ {wsError}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-6">
+        {/* KPI Cards — fed with live WebSocket metrics */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 shrink-0">
-          <MicrophoneStatusCard status={metrics?.microphone_status} />
-          <NoiseLevelCard score={metrics?.noise_score} />
-          <VoiceQualityCard clarity={metrics?.voice_clarity} />
-          <LatencyCard latency={metrics?.latency} />
+          <MicrophoneStatusCard status={metrics.microphone_status} />
+          <NoiseLevelCard score={metrics.noise_score} />
+          <VoiceQualityCard clarity={metrics.voice_clarity} />
+          <LatencyCard latency={metrics.latency} />
         </div>
 
         {/* Main View: Waveform & Alerts */}
-        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" style={{ minHeight: '220px' }}>
           <div className="md:col-span-2 h-full">
-            <AudioWaveformCard />
+            <AudioWaveformCard
+              bars={metrics.waveform_bars}
+              suppressionEnabled={suppressionEnabled}
+            />
           </div>
           <div className="md:col-span-1 h-full">
-            <AlertPanel alerts={alerts} />
+            {/* Use live alerts when connected, otherwise show static fallback */}
+            <AlertPanel alerts={metrics.alerts && metrics.alerts.length > 0 ? metrics.alerts : []} />
           </div>
         </div>
+
+        {/* AI Noise Suppression Comparison — new real-time section */}
+        <NoiseSuppessionPanel
+          suppressionEnabled={suppressionEnabled}
+          toggleSuppression={toggleSuppression}
+          isRecording={isRecording}
+          isProcessing={isProcessing}
+          beforeUrl={beforeUrl}
+          afterUrl={afterUrl}
+          snrBefore={snrBefore}
+          snrAfter={snrAfter}
+          recordAndProcess={recordAndProcess}
+          resetComparison={resetComparison}
+          noiseClass={metrics.noise_class}
+          noiseConfidence={metrics.noise_confidence}
+          snrDb={metrics.snr_db}
+          speechPresence={metrics.speech_presence}
+          isConnected={isConnected}
+        />
       </div>
     </div>
   );
