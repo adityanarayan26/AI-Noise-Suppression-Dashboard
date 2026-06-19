@@ -1,2 +1,9 @@
 .DS_Store
 **/.DS_Store
+backend/venv/
+venv/
+node_modules/
+**/node_modules/
+__pycache__/
+*.pyc
+.env
