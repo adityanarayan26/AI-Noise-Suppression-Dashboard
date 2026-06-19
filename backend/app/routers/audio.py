@@ -1,123 +1,233 @@
-import asyncio
-import base64
-import io
-import struct
-import wave
-
-from fastapi import APIRouter, File, UploadFile
+import os
+import shutil
+import uuid
+import time
+import soundfile as sf
+import numpy as np
+import noisereduce as nr
+from fastapi import APIRouter, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect
 from typing import List
-
-from app.models.schemas import Alert, AudioUploadResponse, AudioProcessResponse
+from app.models.schemas import Alert, AudioUploadResponse
+from app.services import session
 from app.services.noise_suppression_service import NoiseSuppressionService
+from app.services.noise_classification_service import NoiseClassificationService
+from app.services.audio_quality_service import AudioQualityService
+from app.services.cloudinary_service import CloudinaryService
+import subprocess
+
+def get_current_branch():
+    try:
+        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL).decode("utf-8").strip()
+        return branch
+    except Exception:
+        return "main"
 
 router = APIRouter(tags=["Audio"])
 
-# Frame size must match what the frontend sends over WebSocket (1024 samples @ 16 kHz ≈ 64 ms)
-FRAME_SAMPLES = 1024
-SAMPLE_RATE = 16000
+# Create directories to store noisy and clean files
+UPLOAD_DIR_NOISY = "uploads/noisy"
+UPLOAD_DIR_CLEAN = "uploads/clean"
+os.makedirs(UPLOAD_DIR_NOISY, exist_ok=True)
+os.makedirs(UPLOAD_DIR_CLEAN, exist_ok=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper: build a WAV blob from raw Int16 PCM bytes
-# ─────────────────────────────────────────────────────────────────────────────
-def _build_wav(pcm_bytes: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)          # Int16 = 2 bytes
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm_bytes)
-    return buf.getvalue()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper: read raw PCM bytes from a WAV upload (strips WAV header)
-# ─────────────────────────────────────────────────────────────────────────────
-def _wav_to_pcm(wav_bytes: bytes) -> bytes:
-    buf = io.BytesIO(wav_bytes)
-    with wave.open(buf, "rb") as wf:
-        return wf.readframes(wf.getnframes())
-
+# Initialize the suppression service
+suppression_service = NoiseSuppressionService()
 
 @router.get("/alerts", response_model=List[Alert])
 def get_alerts():
-    return [
-        {"message": "Background Noise Detected", "time": "10:30 AM"},
-        {"message": "Keyboard Noise Detected",   "time": "10:32 AM"},
-        {"message": "High Latency Detected",      "time": "10:35 AM"},
-        {"message": "Microphone Quality Reduced", "time": "10:40 AM"},
-    ]
-
+    # Return the dynamic alerts list from session state
+    return session.current_alerts
 
 @router.post("/audio/upload", response_model=AudioUploadResponse)
 def upload_audio(file: UploadFile = File(...)):
-    # Legacy endpoint — kept for backward compatibility.
-    return {
-        "message": f"Received file {file.filename} successfully. Audio processing is skipped.",
-        "status": "success",
-    }
-
-
-@router.post("/api/audio/process", response_model=AudioProcessResponse)
-async def process_audio(file: UploadFile = File(...)):
-    """
-    Single-recording before/after comparison endpoint.
-
-    Accepts a WAV file of raw microphone audio, runs it through the AI
-    noise-suppression pipeline frame-by-frame, and returns both the
-    original and suppressed audio as base64-encoded WAV blobs.
-
-    The frontend can then present both side-by-side for A/B listening.
-    """
-    wav_bytes = await file.read()
-
-    # Strip WAV header → raw Int16 PCM bytes
-    raw_pcm = _wav_to_pcm(wav_bytes)
-
-    # Per-request suppressor (fresh noise profile for every recording)
-    suppressor = NoiseSuppressionService()
-    suppressor.set_suppression(True)
-
-    suppressed_frames: list[bytes] = []
-    total_bytes = len(raw_pcm)
-    frame_bytes = FRAME_SAMPLES * 2  # 2 bytes per Int16 sample
-
-    # Process frame-by-frame (same chunk size as the live WS pipeline)
-    offset = 0
-    while offset + frame_bytes <= total_bytes:
-        frame = raw_pcm[offset: offset + frame_bytes]
-        suppressed_frame = await asyncio.get_event_loop().run_in_executor(
-            None, suppressor.process, frame
+    try:
+        # 1. Save uploaded file to noisy uploads folder locally and to Cloudinary
+        file_bytes = file.file.read()
+        file.file.seek(0)
+        
+        noisy_file_path = os.path.join(UPLOAD_DIR_NOISY, file.filename)
+        with open(noisy_file_path, "wb") as buffer:
+            buffer.write(file_bytes)
+            
+        branch = get_current_branch()
+        
+        cloudinary_url = CloudinaryService.upload_audio(
+            file_bytes=file_bytes, 
+            folder=f"{branch}/beforeNoiseSuppression", 
+            filename=file.filename.split('.')[0]
         )
-        suppressed_frames.append(suppressed_frame)
-        offset += frame_bytes
-
-    # Handle any remaining samples (partial last frame — pad with silence)
-    if offset < total_bytes:
-        remainder = raw_pcm[offset:]
-        padding = bytes(frame_bytes - len(remainder))
-        suppressed_frame = await asyncio.get_event_loop().run_in_executor(
-            None, suppressor.process, remainder + padding
+        
+        # UI testing ke liye dummy audio ko afterNoiseSuppression mein daal rahe hain.
+        # Yahan par aapko apna actual ML model ka output dalna hai.
+        CloudinaryService.upload_audio(
+            file_bytes=file_bytes, 
+            folder=f"{branch}/afterNoiseSuppression", 
+            filename=file.filename.split('.')[0] + "_clean"
         )
-        # Only keep the real samples, not the silence padding
-        suppressed_frames.append(suppressed_frame[: len(remainder)])
+        
+        # 2. Define path for clean audio
+        clean_file_path = os.path.join(UPLOAD_DIR_CLEAN, file.filename)
+        
+        # 3. Apply noise suppression
+        suppression_result = suppression_service.process_audio(noisy_file_path, clean_file_path)
+        if not suppression_result.get("success"):
+            raise HTTPException(status_code=500, detail=f"Suppression model failed: {suppression_result.get('error')}")
 
-    suppressed_pcm = b"".join(suppressed_frames)
+        # 4. Classify noise type using our dedicated classifier
+        noise_type = NoiseClassificationService.classify_noise(noisy_file_path)
 
-    # Compute SNR before and after for the response metadata
-    snr_before = suppressor.compute_snr_db(raw_pcm[:frame_bytes]) if len(raw_pcm) >= frame_bytes else 0.0
-    snr_after  = suppressor.compute_snr_db(suppressed_pcm[:frame_bytes]) if len(suppressed_pcm) >= frame_bytes else 0.0
+        # 5. Analyze audio quality metrics using our quality service
+        quality_metrics = AudioQualityService.analyze_quality(noisy_file_path)
 
-    duration_s = total_bytes / (SAMPLE_RATE * 2)
+        # 6. Update global session metrics
+        session.update_metrics(
+            noise_score=quality_metrics["noise_level"],
+            voice_clarity=quality_metrics["voice_clarity"],
+            audio_quality=quality_metrics["audio_quality"]
+        )
 
-    # Build WAV blobs and base64-encode
-    raw_wav        = _build_wav(raw_pcm)
-    suppressed_wav = _build_wav(suppressed_pcm)
+        # 7. Log a new alert for this audio upload
+        session.add_alert(
+            f"Processed {file.filename}: Dominant noise was '{noise_type}' (Level: {quality_metrics['noise_level']}%)."
+        )
 
-    return AudioProcessResponse(
-        raw_audio_b64=base64.b64encode(raw_wav).decode("ascii"),
-        suppressed_audio_b64=base64.b64encode(suppressed_wav).decode("ascii"),
-        duration_s=round(duration_s, 2),
-        snr_before_db=round(snr_before, 1),
-        snr_after_db=round(snr_after, 1),
-    )
+        return {
+            "message": f"Successfully processed file: {file.filename}",
+            "status": "success",
+            "noise_type": noise_type,
+            "voice_clarity": quality_metrics["voice_clarity"],
+            "noise_score": quality_metrics["noise_level"],
+            "speech_presence": quality_metrics["speech_presence"],
+            "audio_quality": quality_metrics["audio_quality"],
+            "clean_audio_url": cloudinary_url
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process audio: {str(e)}")
+
+@router.get("/audio/files")
+def get_audio_files():
+    try:
+        branch = get_current_branch()
+        before_files = CloudinaryService.get_audio_files(f"{branch}/beforeNoiseSuppression")
+        after_files = CloudinaryService.get_audio_files(f"{branch}/afterNoiseSuppression")
+        return {
+            "before": before_files,
+            "after": after_files
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch Cloudinary files: {str(e)}")
+
+@router.websocket("/audio/stream")
+async def audio_stream(websocket: WebSocket, suppress: bool = True):
+    await websocket.accept()
+    print(f"WebSocket connection established for real-time audio stream. Suppression: {suppress}")
+    
+    # Buffers to calculate live metrics (3 seconds sliding window)
+    rolling_buffer = []
+    full_session_buffer = [] # Accumulate all audio to save at the end
+    samples_count = 0
+    
+    # State to rate-limit alerts and notifications
+    last_alert_time = 0
+    last_detected_noise = "Other"
+    
+    try:
+        while True:
+            # Receive binary chunk (PCM Float32 at 16kHz)
+            data = await websocket.receive_bytes()
+            if not data:
+                break
+            
+            # Convert bytes to numpy Float32 array
+            audio_chunk = np.frombuffer(data, dtype=np.float32)
+            
+            if len(audio_chunk) > 0:
+                full_session_buffer.append(audio_chunk)
+                
+                if suppress:
+                    # 1. Apply fast stationary noise reduction using noisereduce
+                    cleaned_chunk = nr.reduce_noise(
+                        y=audio_chunk,
+                        sr=16000,
+                        stationary=True,
+                        prop_decrease=0.85
+                    )
+                else:
+                    cleaned_chunk = audio_chunk
+                
+                # 2. Accumulate in the sliding buffer for stream analysis
+                rolling_buffer.append(audio_chunk)
+                samples_count += len(audio_chunk)
+                
+                # 3 seconds window at 16kHz = 48,000 samples
+                if samples_count >= 48000:
+                    # Concatenate all accumulated chunks
+                    full_signal = np.concatenate(rolling_buffer)
+                    # Keep only the last 3 seconds
+                    analysis_signal = full_signal[-48000:]
+                    
+                    # Create temporary unique file for analysis
+                    temp_filename = f"temp_stream_{uuid.uuid4().hex}.wav"
+                    try:
+                        sf.write(temp_filename, analysis_signal, 16000)
+                        
+                        # Analyze noise type and quality
+                        noise_type = NoiseClassificationService.classify_noise(temp_filename)
+                        quality_metrics = AudioQualityService.analyze_quality(temp_filename)
+                        
+                        # Update session metrics in real time
+                        session.update_metrics(
+                            noise_score=quality_metrics["noise_level"],
+                            voice_clarity=quality_metrics["voice_clarity"],
+                            audio_quality=quality_metrics["audio_quality"]
+                        )
+                        
+                        # Log alert if specific noise detected (prevent spamming: rate-limit to once per 10s)
+                        current_time = time.time()
+                        if noise_type != "Other" and (noise_type != last_detected_noise or (current_time - last_alert_time) > 10):
+                            session.add_alert(f"Live Mic: Detected '{noise_type}' background noise.")
+                            last_alert_time = current_time
+                            last_detected_noise = noise_type
+                            
+                    except Exception as analysis_err:
+                        print(f"Error in stream analysis: {str(analysis_err)}")
+                    finally:
+                        if os.path.exists(temp_filename):
+                            os.remove(temp_filename)
+                    
+                    # Reset buffer to keep sliding window context
+                    rolling_buffer = [analysis_signal]
+                    samples_count = len(analysis_signal)
+                
+                # 3. Convert back to raw bytes and send cleaned audio
+                cleaned_bytes = cleaned_chunk.astype(np.float32).tobytes()
+                await websocket.send_bytes(cleaned_bytes)
+                
+    except WebSocketDisconnect:
+        print("WebSocket client disconnected")
+        # Save session to Cloudinary
+        if full_session_buffer:
+            session_audio = np.concatenate(full_session_buffer)
+            session_filename = f"session_{uuid.uuid4().hex}.wav"
+            try:
+                sf.write(session_filename, session_audio, 16000)
+                with open(session_filename, "rb") as f:
+                    file_bytes = f.read()
+                    
+                branch = get_current_branch()
+                folder = f"{branch}/afterNoiseSuppression" if suppress else f"{branch}/beforeNoiseSuppression"
+                CloudinaryService.upload_audio(
+                    file_bytes=file_bytes,
+                    folder=folder,
+                    filename=f"live_{'suppressed' if suppress else 'raw'}_{int(time.time())}"
+                )
+                print(f"Uploaded live session to {folder}")
+            except Exception as e:
+                print(f"Failed to save stream to Cloudinary: {e}")
+            finally:
+                if os.path.exists(session_filename):
+                    os.remove(session_filename)
+
+    except Exception as e:
+        print(f"Error in WebSocket audio stream: {str(e)}")

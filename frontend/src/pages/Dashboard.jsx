@@ -4,111 +4,102 @@ import MicrophoneStatusCard from '../components/MicrophoneStatusCard';
 import NoiseLevelCard from '../components/NoiseLevelCard';
 import VoiceQualityCard from '../components/VoiceQualityCard';
 import LatencyCard from '../components/LatencyCard';
+import AudioUploadCard from '../components/AudioUploadCard';
 import AudioWaveformCard from '../components/AudioWaveformCard';
+import LiveMicrophoneCard from '../components/LiveMicrophoneCard';
 import AlertPanel from '../components/AlertPanel';
-import NoiseSuppessionPanel from '../components/NoiseSuppessionPanel';
-import { useAudioWebSocket } from '../hooks/useAudioWebSocket';
-import { healthService } from '../services/api';
+import CloudinaryGallery from '../components/CloudinaryGallery';
+import { healthService, metricsService, audioService } from '../services/api';
 
 const Dashboard = () => {
-  // System health (HTTP poll — backend online/offline check)
   const [systemStatus, setSystemStatus] = useState('loading');
+  const [metrics, setMetrics] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [uploadCount, setUploadCount] = useState(0);
 
-  // ── Real-time audio WebSocket hook ──────────────────────────────────────
-  const {
-    isConnected,
-    metrics,
-    suppressionEnabled,
-    toggleSuppression,
-    isRecording,
-    isProcessing,
-    beforeUrl,
-    afterUrl,
-    snrBefore,
-    snrAfter,
-    recordAndProcess,
-    resetComparison,
-    error: wsError,
-  } = useAudioWebSocket();
+  const fetchData = async () => {
+    try {
+      const [healthRes, metricsRes, alertsRes] = await Promise.all([
+        healthService.getHealth().catch(() => ({ data: { status: 'offline' } })),
+        metricsService.getMetrics(),
+        audioService.getAlerts()
+      ]);
+      setSystemStatus(healthRes.data.status);
+      setMetrics(metricsRes.data);
+      setAlerts(alertsRes.data);
+    } catch (err) {
+      setSystemStatus('offline');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // ── Health check (HTTP) ─────────────────────────────────────────────────
   useEffect(() => {
-    const fetchHealth = async () => {
-      try {
-        const res = await healthService.getHealth().catch(() => ({ data: { status: 'offline' } }));
-        setSystemStatus(res.data.status);
-      } catch {
-        setSystemStatus('offline');
-      }
-    };
-    fetchHealth();
-    const interval = setInterval(fetchHealth, 30000);
+    fetchData();
+    // Poll for alerts and online status check every 30 seconds
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Show loading only on very first render before any metric arrives
-  const loading = metrics.noise_score === 0 && metrics.voice_clarity === 0 && !isConnected;
+  const handleUploadSuccess = (data) => {
+    // Instantly update UI metrics from the processed audio file results
+    setMetrics({
+      microphone_status: 'connected',
+      noise_score: data.noise_score,
+      voice_clarity: data.voice_clarity,
+      latency: metrics?.latency || 50,
+      audio_quality: data.audio_quality
+    });
+    // Refresh alerts to show the new classification log
+    audioService.getAlerts().then((res) => {
+      setAlerts(res.data);
+    });
+    // Trigger Cloudinary gallery refresh
+    setUploadCount(prev => prev + 1);
+  };
 
-  if (loading) {
+  if (loading && !metrics) {
     return (
       <div className="h-full flex items-center justify-center text-zinc-500 text-sm tracking-widest uppercase">
-        Loading...
+        Loading Dashboard...
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col max-w-6xl mx-auto px-6 py-8 overflow-y-auto">
-      <DashboardHeader systemStatus={isConnected ? 'online' : systemStatus} />
+    <div className="h-full overflow-y-auto flex flex-col max-w-6xl mx-auto px-6 py-8">
+      <DashboardHeader systemStatus={systemStatus} />
 
-      {/* WebSocket error banner */}
-      {wsError && (
-        <div className="mb-4 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 shrink-0">
-          ⚠ {wsError}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-6">
-        {/* KPI Cards — fed with live WebSocket metrics */}
+      <div className="flex flex-col gap-6 pb-12">
+        {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 shrink-0">
-          <MicrophoneStatusCard status={metrics.microphone_status} />
-          <NoiseLevelCard score={metrics.noise_score} />
-          <VoiceQualityCard clarity={metrics.voice_clarity} />
-          <LatencyCard latency={metrics.latency} />
+          <MicrophoneStatusCard status={metrics?.microphone_status} />
+          <NoiseLevelCard score={metrics?.noise_score} />
+          <VoiceQualityCard clarity={metrics?.voice_clarity} />
+          <LatencyCard latency={metrics?.latency} />
         </div>
 
-        {/* Main View: Waveform & Alerts */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" style={{ minHeight: '220px' }}>
-          <div className="md:col-span-2 h-full">
-            <AudioWaveformCard
-              bars={metrics.waveform_bars}
-              suppressionEnabled={suppressionEnabled}
-            />
+        {/* Main View: Left side has stack of Upload and Visualizer, Right side has Alerts */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">
+          <div className="md:col-span-2 h-full flex flex-col gap-6">
+            <div className="flex-1 min-h-0">
+              <AudioUploadCard onUploadSuccess={handleUploadSuccess} />
+            </div>
+            <div className="h-[320px] shrink-0">
+              <AudioWaveformCard onUploadSuccess={handleUploadSuccess} />
+            </div>
           </div>
-          <div className="md:col-span-1 h-full">
-            {/* Use live alerts when connected, otherwise show static fallback */}
-            <AlertPanel alerts={metrics.alerts && metrics.alerts.length > 0 ? metrics.alerts : []} />
+          <div className="md:col-span-1 h-full flex flex-col gap-6">
+            <LiveMicrophoneCard />
+            <div className="flex-1 min-h-0">
+              <AlertPanel alerts={alerts} />
+            </div>
           </div>
         </div>
-
-        {/* AI Noise Suppression Comparison — new real-time section */}
-        <NoiseSuppessionPanel
-          suppressionEnabled={suppressionEnabled}
-          toggleSuppression={toggleSuppression}
-          isRecording={isRecording}
-          isProcessing={isProcessing}
-          beforeUrl={beforeUrl}
-          afterUrl={afterUrl}
-          snrBefore={snrBefore}
-          snrAfter={snrAfter}
-          recordAndProcess={recordAndProcess}
-          resetComparison={resetComparison}
-          noiseClass={metrics.noise_class}
-          noiseConfidence={metrics.noise_confidence}
-          snrDb={metrics.snr_db}
-          speechPresence={metrics.speech_presence}
-          isConnected={isConnected}
-        />
+        
+        {/* Cloudinary Gallery */}
+        <CloudinaryGallery refreshTrigger={uploadCount} />
       </div>
     </div>
   );

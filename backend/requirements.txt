@@ -4,7 +4,10 @@ pydantic
 python-multipart
 numpy
 scipy
-scikit-learn
-websockets
-deepfilternet
+librosa
+soundfile
+noisereduce
+cloudinary
+python-dotenv
 torch
+torchaudio
