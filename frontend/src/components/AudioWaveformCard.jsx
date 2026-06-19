@@ -1,34 +1,49 @@
 import React from 'react';
 
-// Static mockup data to prevent re-rendering visual glitch
+// Static mockup data to prevent re-rendering visual glitch when no live data
 const MOCK_BARS = Array.from({ length: 50 }).map((_, i) => {
   const height = 10 + Math.random() * 40 + Math.sin(i * 0.5) * 30;
   return Math.max(5, height);
 });
 
-const AudioWaveformCard = () => {
-  /*
-   * INTERN ASSIGNMENT:
-   * To connect this visualization with a live backend:
-   * 1. Set up a WebSocket or WebRTC connection in your frontend services.
-   * 2. Replace the `MOCK_BARS` with a React state variable (e.g., `const [bars, setBars] = useState([])`).
-   * 3. Update the state dynamically as you receive audio volume/frequency packets from your backend.
-   * 4. Make sure to close the connection properly in a `useEffect` cleanup function.
-   */
+/**
+ * AudioWaveformCard
+ *
+ * Displays a bar-chart waveform visualisation.
+ *
+ * Props:
+ *   bars {number[]} — optional array of 50 bar heights (0–100).
+ *                     When provided (live mode), displays real-time audio data.
+ *                     Falls back to MOCK_BARS when not connected.
+ *   suppressionEnabled {boolean} — shows suppression status badge
+ */
+const AudioWaveformCard = ({ bars, suppressionEnabled }) => {
+  const displayBars = (bars && bars.length > 0) ? bars : MOCK_BARS;
+  const isLive = bars && bars.length > 0;
 
   return (
     <div className="h-full p-6 border border-zinc-300 rounded-xl bg-zinc-100/50 flex flex-col">
       <div className="flex items-center justify-between mb-6 shrink-0">
         <h3 className="text-sm font-medium text-zinc-900">Live Activity</h3>
-        <span className="text-[10px] tracking-widest text-zinc-500 uppercase">Recording</span>
+        <div className="flex items-center gap-3">
+          {suppressionEnabled !== undefined && (
+            <span className={`text-[10px] tracking-widest uppercase font-medium px-2 py-0.5 rounded ${suppressionEnabled ? 'bg-zinc-900 text-white' : 'bg-zinc-200 text-zinc-600'}`}>
+              {suppressionEnabled ? 'Suppression On' : 'Suppression Off'}
+            </span>
+          )}
+          <span className={`text-[10px] tracking-widest uppercase flex items-center gap-1.5 ${isLive ? 'text-zinc-700' : 'text-zinc-400'}`}>
+            {isLive && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />}
+            {isLive ? 'Recording' : 'Standby'}
+          </span>
+        </div>
       </div>
-      
+
       <div className="flex-1 flex items-end justify-between space-x-[2px]">
-        {MOCK_BARS.map((height, i) => (
-          <div 
-            key={i} 
-            className="w-full bg-zinc-400 rounded-t-sm opacity-80"
-            style={{ height: `${height}%` }}
+        {displayBars.map((height, i) => (
+          <div
+            key={i}
+            className={`w-full rounded-t-sm opacity-80 transition-all duration-75 ${isLive ? 'bg-zinc-700' : 'bg-zinc-400'}`}
+            style={{ height: `${Math.max(2, height)}%` }}
           />
         ))}
       </div>

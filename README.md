@@ -53,11 +53,13 @@ The goal is to monitor interview audio quality and later integrate AI-powered fe
 ```bash
 cd backend
 
-python -m venv venv
+python -m venv .venv
 
-source venv/bin/activate
-# Windows
-venv\Scripts\activate
+# PowerShell
+. .\.venv\Scripts\Activate.ps1
+
+# Command Prompt
+.venv\Scripts\activate
 
 pip install -r requirements.txt
 
