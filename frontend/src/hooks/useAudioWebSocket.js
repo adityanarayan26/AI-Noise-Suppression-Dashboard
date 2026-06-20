@@ -75,6 +75,22 @@ export function useAudioWebSocket() {
   const isRecordingRef = useRef(false);   // always-fresh mirror of isRecording for closures
   const suppressionRef = useRef(false);   // always-fresh mirror of suppressionEnabled
 
+  // Auto-resume AudioContext on user interaction
+  useEffect(() => {
+    const resumeAudio = () => {
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+    };
+    // Listen to any interaction to unlock audio
+    window.addEventListener('click', resumeAudio);
+    window.addEventListener('keydown', resumeAudio);
+    return () => {
+      window.removeEventListener('click', resumeAudio);
+      window.removeEventListener('keydown', resumeAudio);
+    };
+  }, []);
+
   // Keep refs in sync with state
   useEffect(() => { suppressionRef.current = suppressionEnabled; }, [suppressionEnabled]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
@@ -165,8 +181,13 @@ export function useAudioWebSocket() {
         onAudioProcessRef.current(float32, ctx.sampleRate);
       };
 
+      // Mute the output to prevent speaker feedback while keeping the processor running
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = 0;
+
       source.connect(processor);
-      processor.connect(ctx.destination);
+      processor.connect(gainNode);
+      gainNode.connect(ctx.destination);
 
       setIsCapturing(true);
     } catch (err) {
