@@ -1,7 +1,18 @@
 import torch
 import torchaudio
 import os
-from typing import Dict, Any
+import logging
+import numpy as np
+from typing import Dict, Any, Optional
+from scipy.signal import resample_poly
+
+logger = logging.getLogger(__name__)
+
+try:
+    import df
+    _df_available = True
+except ImportError:
+    _df_available = False
 
 class NoiseSuppressionService:
     """
@@ -11,6 +22,15 @@ class NoiseSuppressionService:
     def __init__(self):
         self._suppression_enabled: bool = True
         self._frame_count: int = 0
+        
+        self.SAMPLE_RATE = 16000
+        self._RESAMPLE_UP = 3
+        self._RESAMPLE_DOWN = 1
+        self._RESAMPLE_UP2 = 1
+        self._RESAMPLE_DOWN2 = 3
+        self.NOISE_PROFILE_FRAMES = 10
+        self.ALPHA = 1.5
+        self.SPECTRAL_FLOOR = 0.05
 
         # ── Try to initialise DeepFilterNet ──────────────────────────────────
         self._use_df: bool = False
@@ -40,6 +60,37 @@ class NoiseSuppressionService:
     # ─────────────────────────────────────────────────────────────────────────
     # Public interface
     # ─────────────────────────────────────────────────────────────────────────
+
+    def process_audio(self, input_path: str, output_path: str) -> Dict[str, Any]:
+        """
+        Process a full audio file from input_path and save the cleaned result to output_path.
+        Used for file uploads.
+        """
+        try:
+            import soundfile as sf
+            import noisereduce as nr
+            
+            # Load audio
+            audio_data, sr = sf.read(input_path)
+            
+            # If multi-channel, we reduce noise on each channel or average. nr handles it automatically.
+            reduced_noise = nr.reduce_noise(y=audio_data, sr=sr, stationary=True, prop_decrease=0.85)
+            
+            # Save cleaned audio
+            sf.write(output_path, reduced_noise, sr)
+            
+            return {
+                "success": True,
+                "error": None,
+                "clean_audio_url": output_path
+            }
+        except Exception as e:
+            logger.error(f"Error processing file audio: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "clean_audio_url": ""
+            }
 
     def set_suppression(self, enabled: bool) -> None:
         self._suppression_enabled = enabled

@@ -61,8 +61,11 @@ const Dashboard = () => {
 
   if (loading && !metrics) {
     return (
-      <div className="h-full flex items-center justify-center text-zinc-500 text-sm tracking-widest uppercase">
-        Loading Dashboard...
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-400 gap-4">
+        <div className="h-7 w-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="text-[10px] tracking-widest uppercase font-semibold text-slate-500">
+          Loading Dashboard...
+        </div>
       </div>
     );
   }
@@ -80,18 +83,21 @@ const Dashboard = () => {
           <LatencyCard latency={metrics?.latency} />
         </div>
 
-        {/* Main View: Waveform & Alerts */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" style={{ minHeight: '220px' }}>
-          <div className="md:col-span-2 h-full">
-            <AudioWaveformCard
-              bars={metrics.waveform_bars}
-              suppressionEnabled={suppressionEnabled}
-              isConnected={isConnected}
-            />
+        {/* Main View: Left side has stack of Upload and Visualizer, Right side has Alerts */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">
+          <div className="md:col-span-2 flex flex-col gap-6">
+            <div className="flex-1 min-h-fit">
+              <AudioUploadCard onUploadSuccess={handleUploadSuccess} />
+            </div>
+            <div className="min-h-fit">
+              <AudioWaveformCard onUploadSuccess={handleUploadSuccess} />
+            </div>
           </div>
-          <div className="md:col-span-1 h-full flex flex-col gap-6">
-            <LiveMicrophoneCard />
-            <div className="flex-1 min-h-0">
+          <div className="md:col-span-1 flex flex-col gap-6">
+            <div className="min-h-fit">
+              <LiveMicrophoneCard />
+            </div>
+            <div className="flex-1 min-h-[300px]">
               <AlertPanel alerts={alerts} />
             </div>
           </div>

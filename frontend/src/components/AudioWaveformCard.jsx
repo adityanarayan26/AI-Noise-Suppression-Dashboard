@@ -59,11 +59,6 @@ const AudioWaveformCard = ({ bars, suppressionEnabled, isConnected }) => {
           </span>
         </div>
 
-        {uploadError && (
-          <div className="mt-3 p-3 bg-red-50 text-red-700 text-[11px] rounded border border-red-200">
-            ⚠️ {uploadError}
-          </div>
-        )}
       </div>
 
       {/* ── Waveform bars ── */}
