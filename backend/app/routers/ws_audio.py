@@ -111,6 +111,9 @@ async def websocket_audio(websocket: WebSocket):
             # Encode suppressed audio as base64 for optional client-side recording
             suppressed_b64 = base64.b64encode(suppressed_bytes).decode("ascii")
 
+            # Get current engine info for frontend visibility
+            engine_status = suppressor.get_status()
+
             payload = {
                 "type": "metrics",
                 "microphone_status": quality["microphone_status"],
@@ -128,6 +131,8 @@ async def websocket_audio(websocket: WebSocket):
                 "suppression_enabled": suppression_enabled,
                 "suppressed_audio_b64": suppressed_b64,
                 "features": classification.get("features", {}),
+                "engine": engine_status["engine"],
+                "deepfilternet_active": engine_status["deepfilternet_active"],
             }
 
             await websocket.send_text(json.dumps(payload))

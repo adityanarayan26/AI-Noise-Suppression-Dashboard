@@ -11,6 +11,8 @@ import React, { useState, useEffect, useRef } from 'react';
  * Props:
  *   suppressionEnabled   {boolean}
  *   toggleSuppression    {function}
+ *   playbackEnabled      {boolean}  — real-time cleaned audio playback
+ *   togglePlayback       {function}
  *   isRecording          {boolean}   — mic is currently capturing
  *   isProcessing         {boolean}   — waiting for backend response
  *   beforeUrl            {string|null}
@@ -24,6 +26,8 @@ import React, { useState, useEffect, useRef } from 'react';
  *   snrDb                {number}
  *   speechPresence       {boolean}
  *   isConnected          {boolean}
+ *   engine               {string}    — 'deepfilternet' or 'spectral_subtraction'
+ *   deepfilternetActive  {boolean}
  */
 
 const RECORD_DURATION_S = 5;
@@ -31,6 +35,8 @@ const RECORD_DURATION_S = 5;
 const NoiseSuppessionPanel = ({
   suppressionEnabled,
   toggleSuppression,
+  playbackEnabled,
+  togglePlayback,
   isRecording,
   isProcessing,
   beforeUrl,
@@ -44,6 +50,8 @@ const NoiseSuppessionPanel = ({
   snrDb,
   speechPresence,
   isConnected,
+  engine,
+  deepfilternetActive,
 }) => {
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef(null);
@@ -81,6 +89,12 @@ const NoiseSuppessionPanel = ({
 
   const hasResults = beforeUrl && afterUrl;
 
+  // Engine display
+  const engineLabel = deepfilternetActive ? 'DeepFilterNet' : 'Spectral Subtraction';
+  const engineColor = deepfilternetActive
+    ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+    : 'bg-amber-100 text-amber-700 border-amber-300';
+
   return (
     <div className="shrink-0 mt-6 border border-zinc-300 rounded-xl bg-zinc-100/50 p-6">
 
@@ -94,6 +108,11 @@ const NoiseSuppessionPanel = ({
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Engine badge */}
+          <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest border ${engineColor}`}>
+            ⚙ {engineLabel}
+          </span>
+
           {/* Live indicator */}
           <span className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider ${isConnected ? 'text-zinc-700' : 'text-red-500'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
@@ -117,8 +136,37 @@ const NoiseSuppessionPanel = ({
             <span className={`w-2 h-2 rounded-full ${suppressionEnabled ? 'bg-green-400' : 'bg-zinc-400'}`} />
             Suppression {suppressionEnabled ? 'ON' : 'OFF'}
           </button>
+
+          {/* Playback toggle — listen to cleaned audio in real-time */}
+          {suppressionEnabled && (
+            <button
+              id="playback-toggle-btn"
+              onClick={togglePlayback}
+              disabled={!isConnected}
+              className={`
+                relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold
+                uppercase tracking-widest border transition-all duration-200
+                ${playbackEnabled
+                  ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-500'
+                  : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'}
+                disabled:opacity-40 disabled:cursor-not-allowed
+              `}
+              title="Listen to the AI-cleaned audio through your speakers (use headphones to avoid feedback)"
+            >
+              {playbackEnabled ? '🔊' : '🔇'}
+              {playbackEnabled ? 'Listening' : 'Listen'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Headphone warning when playback is active */}
+      {playbackEnabled && suppressionEnabled && (
+        <div className="mb-4 p-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-medium flex items-center gap-2">
+          <span>🎧</span>
+          <span>Use headphones to avoid audio feedback. You're hearing the AI-cleaned audio in real-time.</span>
+        </div>
+      )}
 
       {/* ── AI Analysis strip ── */}
       <div className="flex flex-wrap items-center gap-4 mb-6 p-3 bg-white border border-zinc-200 rounded-lg">

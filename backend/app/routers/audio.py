@@ -2,6 +2,8 @@ import os
 import shutil
 import uuid
 import time
+import base64
+import io
 import soundfile as sf
 import numpy as np
 import noisereduce as nr
@@ -231,3 +233,85 @@ async def audio_stream(websocket: WebSocket, suppress: bool = True):
 
     except Exception as e:
         print(f"Error in WebSocket audio stream: {str(e)}")
+
+
+@router.post("/api/audio/process")
+async def process_audio_comparison(file: UploadFile = File(...)):
+    """
+    Accept a WAV recording, run DeepFilterNet suppression, and return
+    both raw + suppressed audio as base64-encoded WAV along with SNR metrics.
+
+    Used by the frontend's recordAndProcess() for before/after comparison.
+    """
+    try:
+        file_bytes = await file.read()
+
+        # Save to temp file
+        temp_id = uuid.uuid4().hex
+        raw_path = os.path.join(UPLOAD_DIR_NOISY, f"comparison_raw_{temp_id}.wav")
+        clean_path = os.path.join(UPLOAD_DIR_CLEAN, f"comparison_clean_{temp_id}.wav")
+
+        with open(raw_path, "wb") as f:
+            f.write(file_bytes)
+
+        # Create a fresh suppression service instance for file processing
+        file_suppressor = NoiseSuppressionService()
+
+        # Run suppression
+        result = file_suppressor.process_audio(raw_path, clean_path)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Suppression failed: {result.get('error')}",
+            )
+
+        # Compute SNR before and after
+        raw_audio, raw_sr = sf.read(raw_path)
+        clean_audio, clean_sr = sf.read(clean_path)
+
+        def compute_snr(audio_data):
+            if len(audio_data) == 0:
+                return 0.0
+            if audio_data.ndim > 1:
+                audio_data = np.mean(audio_data, axis=1)
+            spectrum = np.fft.rfft(audio_data)
+            magnitude = np.abs(spectrum)
+            freq_bins = np.fft.rfftfreq(len(audio_data), d=1.0 / 16000)
+            speech_mask = (freq_bins >= 300) & (freq_bins <= 3400)
+            noise_mask = ~speech_mask
+            speech_power = (
+                np.mean(magnitude[speech_mask] ** 2) if speech_mask.any() else 1e-10
+            )
+            noise_power = (
+                np.mean(magnitude[noise_mask] ** 2) if noise_mask.any() else 1e-10
+            )
+            snr = 10.0 * np.log10(speech_power / (noise_power + 1e-10))
+            return float(np.clip(snr, -20.0, 60.0))
+
+        snr_before = compute_snr(raw_audio)
+        snr_after = compute_snr(clean_audio)
+
+        # Encode both files as base64
+        with open(raw_path, "rb") as f:
+            raw_b64 = base64.b64encode(f.read()).decode("ascii")
+        with open(clean_path, "rb") as f:
+            clean_b64 = base64.b64encode(f.read()).decode("ascii")
+
+        # Cleanup temp files
+        for p in (raw_path, clean_path):
+            if os.path.exists(p):
+                os.remove(p)
+
+        return {
+            "raw_audio_b64": raw_b64,
+            "suppressed_audio_b64": clean_b64,
+            "snr_before_db": round(snr_before, 1),
+            "snr_after_db": round(snr_after, 1),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process audio: {str(e)}"
+        )

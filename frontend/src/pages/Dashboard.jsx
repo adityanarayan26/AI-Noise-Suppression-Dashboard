@@ -6,17 +6,49 @@ import VoiceQualityCard from '../components/VoiceQualityCard';
 import LatencyCard from '../components/LatencyCard';
 import AudioUploadCard from '../components/AudioUploadCard';
 import AudioWaveformCard from '../components/AudioWaveformCard';
-import LiveMicrophoneCard from '../components/LiveMicrophoneCard';
 import AlertPanel from '../components/AlertPanel';
 import CloudinaryGallery from '../components/CloudinaryGallery';
+import NoiseSuppessionPanel from '../components/NoiseSuppessionPanel';
 import { healthService, metricsService, audioService } from '../services/api';
+import { useAudioWebSocket } from '../hooks/useAudioWebSocket';
 
 const Dashboard = () => {
   const [systemStatus, setSystemStatus] = useState('loading');
-  const [metrics, setMetrics] = useState(null);
+  const [restMetrics, setRestMetrics] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploadCount, setUploadCount] = useState(0);
+
+  // --- Live WebSocket connection ---
+  const {
+    isConnected,
+    isCapturing,
+    error: wsError,
+    metrics: liveMetrics,
+    suppressionEnabled,
+    toggleSuppression,
+    playbackEnabled,
+    togglePlayback,
+    isRecording,
+    isProcessing,
+    beforeUrl,
+    afterUrl,
+    snrBefore,
+    snrAfter,
+    recordAndProcess,
+    resetComparison,
+  } = useAudioWebSocket();
+
+  // Merge live metrics with REST-fetched fallback
+  const displayMetrics = isConnected
+    ? {
+        microphone_status: liveMetrics.microphone_status || 'connected',
+        noise_score: liveMetrics.noise_score ?? restMetrics?.noise_score ?? 0,
+        voice_clarity: liveMetrics.voice_clarity ?? restMetrics?.voice_clarity ?? 0,
+        latency: liveMetrics.latency ?? restMetrics?.latency ?? 0,
+        audio_quality: liveMetrics.audio_quality ?? restMetrics?.audio_quality ?? 0,
+      }
+    : restMetrics;
 
   const fetchData = async () => {
     try {
@@ -26,7 +58,7 @@ const Dashboard = () => {
         audioService.getAlerts()
       ]);
       setSystemStatus(healthRes.data.status);
-      setMetrics(metricsRes.data);
+      setRestMetrics(metricsRes.data);
       setAlerts(alertsRes.data);
     } catch (err) {
       setSystemStatus('offline');
@@ -44,11 +76,11 @@ const Dashboard = () => {
 
   const handleUploadSuccess = (data) => {
     // Instantly update UI metrics from the processed audio file results
-    setMetrics({
+    setRestMetrics({
       microphone_status: 'connected',
       noise_score: data.noise_score,
       voice_clarity: data.voice_clarity,
-      latency: metrics?.latency || 50,
+      latency: restMetrics?.latency || 50,
       audio_quality: data.audio_quality
     });
     // Refresh alerts to show the new classification log
@@ -59,7 +91,7 @@ const Dashboard = () => {
     setUploadCount(prev => prev + 1);
   };
 
-  if (loading && !metrics) {
+  if (loading && !restMetrics) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-400 gap-4">
         <div className="h-7 w-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
@@ -70,17 +102,30 @@ const Dashboard = () => {
     );
   }
 
+  // Combine REST alerts with live WebSocket alerts
+  const combinedAlerts = [
+    ...(liveMetrics.alerts || []),
+    ...alerts,
+  ].slice(0, 15);
+
   return (
     <div className="h-full overflow-y-auto flex flex-col max-w-6xl mx-auto px-6 py-8">
-      <DashboardHeader systemStatus={systemStatus} />
+      <DashboardHeader systemStatus={isConnected ? 'ok' : systemStatus} />
 
       <div className="flex flex-col gap-6 pb-12">
-        {/* KPI Cards */}
+        {/* WebSocket error banner */}
+        {wsError && (
+          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+            ⚠ {wsError}
+          </div>
+        )}
+
+        {/* KPI Cards — fed by live WS metrics when connected */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 shrink-0">
-          <MicrophoneStatusCard status={metrics?.microphone_status} />
-          <NoiseLevelCard score={metrics?.noise_score} />
-          <VoiceQualityCard clarity={metrics?.voice_clarity} />
-          <LatencyCard latency={metrics?.latency} />
+          <MicrophoneStatusCard status={displayMetrics?.microphone_status} />
+          <NoiseLevelCard score={displayMetrics?.noise_score} />
+          <VoiceQualityCard clarity={displayMetrics?.voice_clarity} />
+          <LatencyCard latency={displayMetrics?.latency} />
         </div>
 
         {/* Main View: Left side has stack of Upload and Visualizer, Right side has Alerts */}
@@ -94,14 +139,34 @@ const Dashboard = () => {
             </div>
           </div>
           <div className="md:col-span-1 flex flex-col gap-6">
-            <div className="min-h-fit">
-              <LiveMicrophoneCard />
-            </div>
             <div className="flex-1 min-h-[300px]">
-              <AlertPanel alerts={alerts} />
+              <AlertPanel alerts={combinedAlerts} />
             </div>
           </div>
         </div>
+
+        {/* Noise Suppression Panel — wired to live WebSocket */}
+        <NoiseSuppessionPanel
+          suppressionEnabled={suppressionEnabled}
+          toggleSuppression={toggleSuppression}
+          playbackEnabled={playbackEnabled}
+          togglePlayback={togglePlayback}
+          isRecording={isRecording}
+          isProcessing={isProcessing}
+          beforeUrl={beforeUrl}
+          afterUrl={afterUrl}
+          snrBefore={snrBefore}
+          snrAfter={snrAfter}
+          recordAndProcess={recordAndProcess}
+          resetComparison={resetComparison}
+          noiseClass={liveMetrics.noise_class}
+          noiseConfidence={liveMetrics.noise_confidence}
+          snrDb={liveMetrics.snr_db}
+          speechPresence={liveMetrics.speech_presence}
+          isConnected={isConnected}
+          engine={liveMetrics.engine}
+          deepfilternetActive={liveMetrics.deepfilternet_active}
+        />
 
         {/* Cloudinary Gallery */}
         <CloudinaryGallery refreshTrigger={uploadCount} />

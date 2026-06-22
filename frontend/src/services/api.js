@@ -28,6 +28,15 @@ export const audioService = {
       },
     });
   },
+  processAudio: (wavBlob) => {
+    const formData = new FormData();
+    formData.append('file', wavBlob, 'recording.wav');
+    return apiClient.post('/api/audio/process', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  },
   getCloudinaryFiles: () => apiClient.get('/audio/files'),
 };
 

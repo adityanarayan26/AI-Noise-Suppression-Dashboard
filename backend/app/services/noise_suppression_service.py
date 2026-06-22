@@ -16,11 +16,12 @@ except ImportError:
 
 class NoiseSuppressionService:
     """
-    Service to perform background noise suppression using a pre-trained ConvTasNet model.
+    Service to perform background noise suppression using DeepFilterNet.
+    Falls back to spectral subtraction when DeepFilterNet is unavailable.
     """
     
     def __init__(self):
-        self._suppression_enabled: bool = True
+        self._suppression_enabled: bool = False
         self._frame_count: int = 0
         
         self.SAMPLE_RATE = 16000
@@ -45,17 +46,36 @@ class NoiseSuppressionService:
                 self._df_model, self._df_state, _ = init_df()
                 self._df_model.eval()
                 self._use_df = True
-                logger.info("[DeepFilterNet] ✓ Per-connection model+state initialised.")
+                logger.info("[DeepFilterNet] ✓ Model + state initialised successfully.")
             except Exception as exc:
                 logger.error(
-                    "[DeepFilterNet] Per-connection init failed (%s). "
-                    "Using spectral subtraction for this session.",
+                    "[DeepFilterNet] Init failed: %s  — "
+                    "falling back to spectral subtraction for this session.",
                     exc,
                 )
+        else:
+            logger.warning(
+                "[DeepFilterNet] 'df' package not importable. "
+                "Install with: pip install deepfilternet"
+            )
 
         # ── Fallback spectral-subtraction state ──────────────────────────────
         self._noise_profile: Optional[np.ndarray] = None
         self._profile_buffer: list[np.ndarray] = []
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Status / diagnostics
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_status(self) -> dict:
+        """Return a status dict describing the current engine state."""
+        return {
+            "engine": "deepfilternet" if self._use_df else "spectral_subtraction",
+            "deepfilternet_available": _df_available,
+            "deepfilternet_active": self._use_df,
+            "suppression_enabled": self._suppression_enabled,
+            "frame_count": self._frame_count,
+        }
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public interface
@@ -64,32 +84,99 @@ class NoiseSuppressionService:
     def process_audio(self, input_path: str, output_path: str) -> Dict[str, Any]:
         """
         Process a full audio file from input_path and save the cleaned result to output_path.
-        Used for file uploads.
+        Uses DeepFilterNet when available, falls back to noisereduce.
         """
         try:
             import soundfile as sf
-            import noisereduce as nr
-            
+
             # Load audio
             audio_data, sr = sf.read(input_path)
-            
-            # If multi-channel, we reduce noise on each channel or average. nr handles it automatically.
-            reduced_noise = nr.reduce_noise(y=audio_data, sr=sr, stationary=True, prop_decrease=0.85)
-            
+
+            # Convert to mono if needed
+            if audio_data.ndim > 1:
+                audio_data = np.mean(audio_data, axis=1)
+
+            # Resample to 16 kHz if needed
+            if sr != self.SAMPLE_RATE:
+                from scipy.signal import resample_poly
+                from math import gcd
+                g = gcd(self.SAMPLE_RATE, sr)
+                audio_data = resample_poly(
+                    audio_data, self.SAMPLE_RATE // g, sr // g
+                ).astype(np.float32)
+                sr = self.SAMPLE_RATE
+
+            if self._use_df:
+                try:
+                    import torch
+                    from df.enhance import enhance, init_df
+
+                    # DeepFilterNet needs 48 kHz
+                    up = resample_poly(
+                        audio_data.astype(np.float32),
+                        self._RESAMPLE_UP,
+                        self._RESAMPLE_DOWN,
+                    ).astype(np.float32)
+
+                    # Create a fresh model+state for file processing to avoid
+                    # polluting the live-stream LSTM state
+                    file_model, file_state, _ = init_df()
+                    file_model.eval()
+
+                    audio_tensor = torch.from_numpy(up).unsqueeze(0).unsqueeze(0)
+                    with torch.no_grad():
+                        enhanced = enhance(file_model, file_state, audio_tensor)
+
+                    enhanced_np = enhanced.squeeze().numpy()
+
+                    # Downsample back to 16 kHz
+                    reduced_noise = resample_poly(
+                        enhanced_np,
+                        self._RESAMPLE_UP2,
+                        self._RESAMPLE_DOWN2,
+                    ).astype(np.float32)
+
+                    # Match original length
+                    orig_len = len(audio_data)
+                    if len(reduced_noise) > orig_len:
+                        reduced_noise = reduced_noise[:orig_len]
+                    elif len(reduced_noise) < orig_len:
+                        reduced_noise = np.pad(
+                            reduced_noise, (0, orig_len - len(reduced_noise))
+                        )
+
+                    logger.info("[DeepFilterNet] File processed successfully.")
+
+                except Exception as e:
+                    logger.warning(
+                        "[DeepFilterNet] File processing failed (%s), "
+                        "falling back to noisereduce.",
+                        e,
+                    )
+                    import noisereduce as nr
+                    reduced_noise = nr.reduce_noise(
+                        y=audio_data, sr=sr, stationary=True, prop_decrease=0.85
+                    )
+            else:
+                import noisereduce as nr
+                reduced_noise = nr.reduce_noise(
+                    y=audio_data, sr=sr, stationary=True, prop_decrease=0.85
+                )
+
             # Save cleaned audio
             sf.write(output_path, reduced_noise, sr)
-            
+
             return {
                 "success": True,
                 "error": None,
-                "clean_audio_url": output_path
+                "clean_audio_url": output_path,
             }
         except Exception as e:
             logger.error(f"Error processing file audio: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "clean_audio_url": ""
+                "clean_audio_url": "",
             }
 
     def set_suppression(self, enabled: bool) -> None:
@@ -123,12 +210,16 @@ class NoiseSuppressionService:
         )
 
         if not self._suppression_enabled:
+            self._frame_count += 1
             return self._to_int16_bytes(samples)
 
         if self._use_df:
-            return self._process_deepfilter(samples)
+            result = self._process_deepfilter(samples)
         else:
-            return self._process_spectral(samples)
+            result = self._process_spectral(samples)
+
+        self._frame_count += 1
+        return result
 
     def compute_snr_db(self, pcm_bytes: bytes) -> float:
         """

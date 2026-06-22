@@ -7,7 +7,8 @@
  *  3. Resample frames to 16 kHz Int16 and send over WebSocket with a control byte
  *  4. Receive JSON metrics and base64 suppressed audio from the backend
  *  5. Expose metrics state for the dashboard
- *  6. recordAndProcess(durationSeconds) — single-button recording:
+ *  6. Play back cleaned audio in real-time when suppression + playback are enabled
+ *  7. recordAndProcess(durationSeconds) — single-button recording:
  *       a. Captures raw PCM for durationSeconds
  *       b. Builds a WAV blob
  *       c. POSTs to /api/audio/process
@@ -51,15 +52,23 @@ export function useAudioWebSocket() {
     waveform_bars: Array(50).fill(0),
     alerts: [],
     suppression_enabled: false,
+    engine: 'unknown',
+    deepfilternet_active: false,
   });
 
   // --- Suppression toggle (for live streaming) ---
   const [suppressionEnabled, setSuppressionEnabled] = useState(false);
 
+  // --- Real-time cleaned audio playback ---
+  const [playbackEnabled, setPlaybackEnabled] = useState(false);
+  const playbackCtxRef = useRef(null);
+  const nextPlayTimeRef = useRef(0);
+  const playbackEnabledRef = useRef(false);
+
   // --- Single-recording comparison state ---
   const [beforeUrl, setBeforeUrl] = useState(null);       // raw audio URL
   const [afterUrl, setAfterUrl] = useState(null);         // suppressed audio URL
-  const [isRecording, setIsRecording] = useState(false);  // mic is capturing for comparison
+  const [isRecording, setIsRecording] = useState(false);  // mic is currently capturing
   const [isProcessing, setIsProcessing] = useState(false); // waiting for /api/audio/process
   const [snrBefore, setSnrBefore] = useState(null);
   const [snrAfter, setSnrAfter] = useState(null);
@@ -81,6 +90,9 @@ export function useAudioWebSocket() {
       if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
         audioCtxRef.current.resume();
       }
+      if (playbackCtxRef.current && playbackCtxRef.current.state === 'suspended') {
+        playbackCtxRef.current.resume();
+      }
     };
     // Listen to any interaction to unlock audio
     window.addEventListener('click', resumeAudio);
@@ -94,6 +106,7 @@ export function useAudioWebSocket() {
   // Keep refs in sync with state
   useEffect(() => { suppressionRef.current = suppressionEnabled; }, [suppressionEnabled]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { playbackEnabledRef.current = playbackEnabled; }, [playbackEnabled]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Utility: float32 → Int16 conversion + simple linear resampling
@@ -120,6 +133,62 @@ export function useAudioWebSocket() {
     payload[0] = controlByte;
     payload.set(new Uint8Array(int16Array.buffer), 1);
     wsRef.current.send(payload.buffer);
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Real-time cleaned audio playback
+  // ─────────────────────────────────────────────────────────────────────────
+  const playCleanedAudio = useCallback((b64String) => {
+    try {
+      // Lazy-init playback AudioContext
+      if (!playbackCtxRef.current) {
+        playbackCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: TARGET_SAMPLE_RATE,
+        });
+      }
+      const ctx = playbackCtxRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+        return; // skip this frame; playback will start on next
+      }
+
+      // Decode base64 → Int16 → Float32
+      const binary = atob(b64String);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const int16 = new Int16Array(bytes.buffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+      }
+
+      if (float32.length === 0) return;
+
+      // Create AudioBuffer
+      const buffer = ctx.createBuffer(1, float32.length, TARGET_SAMPLE_RATE);
+      buffer.getChannelData(0).set(float32);
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+
+      // Schedule gapless playback
+      const now = ctx.currentTime;
+      if (nextPlayTimeRef.current < now) {
+        // First frame or gap — start with a tiny buffer to prevent clicks
+        nextPlayTimeRef.current = now + 0.03;
+      }
+      // Prevent latency buildup: if we're too far ahead, snap back
+      if (nextPlayTimeRef.current > now + 0.3) {
+        nextPlayTimeRef.current = now + 0.03;
+      }
+
+      source.start(nextPlayTimeRef.current);
+      nextPlayTimeRef.current += float32.length / TARGET_SAMPLE_RATE;
+    } catch (err) {
+      // Playback errors shouldn't break the pipeline
+      console.warn('Audio playback error:', err);
+    }
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -215,7 +284,12 @@ export function useAudioWebSocket() {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
+    if (playbackCtxRef.current) {
+      playbackCtxRef.current.close();
+      playbackCtxRef.current = null;
+    }
     pcmBufferRef.current = [];
+    nextPlayTimeRef.current = 0;
     setIsCapturing(false);
   }, []);
 
@@ -237,6 +311,15 @@ export function useAudioWebSocket() {
           const data = JSON.parse(event.data);
           if (data.type === 'metrics') {
             setMetrics(prev => ({ ...prev, ...data }));
+
+            // Real-time cleaned audio playback
+            if (
+              data.suppressed_audio_b64 &&
+              playbackEnabledRef.current &&
+              suppressionRef.current
+            ) {
+              playCleanedAudio(data.suppressed_audio_b64);
+            }
           }
         } catch {
           // ignore parse errors
@@ -252,7 +335,7 @@ export function useAudioWebSocket() {
     ws.onerror = () => {
       setError('WebSocket connection failed. Is the backend running?');
     };
-  }, []);
+  }, [playCleanedAudio]);
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
@@ -283,6 +366,22 @@ export function useAudioWebSocket() {
   // ─────────────────────────────────────────────────────────────────────────
   const toggleSuppression = useCallback(() => {
     setSuppressionEnabled(prev => !prev);
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Toggle real-time audio playback
+  // ─────────────────────────────────────────────────────────────────────────
+  const togglePlayback = useCallback(() => {
+    setPlaybackEnabled(prev => {
+      const next = !prev;
+      if (!next && playbackCtxRef.current) {
+        // Stop playback — close and reset the context
+        playbackCtxRef.current.close();
+        playbackCtxRef.current = null;
+        nextPlayTimeRef.current = 0;
+      }
+      return next;
+    });
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -381,6 +480,9 @@ export function useAudioWebSocket() {
     // Live suppression toggle
     suppressionEnabled,
     toggleSuppression,
+    // Real-time audio playback
+    playbackEnabled,
+    togglePlayback,
     // Single-recording comparison
     isRecording,
     isProcessing,

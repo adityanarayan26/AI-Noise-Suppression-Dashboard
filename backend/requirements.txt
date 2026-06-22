@@ -11,3 +11,5 @@ cloudinary
 python-dotenv
 torch
 torchaudio
+deepfilternet
+scikit-learn
