@@ -135,7 +135,11 @@ const Dashboard = () => {
               <AudioUploadCard onUploadSuccess={handleUploadSuccess} />
             </div>
             <div className="min-h-fit">
-              <AudioWaveformCard onUploadSuccess={handleUploadSuccess} />
+              <AudioWaveformCard
+                bars={liveMetrics.waveform_bars}
+                suppressionEnabled={suppressionEnabled}
+                isConnected={isConnected}
+              />
             </div>
           </div>
           <div className="md:col-span-1 flex flex-col gap-6">

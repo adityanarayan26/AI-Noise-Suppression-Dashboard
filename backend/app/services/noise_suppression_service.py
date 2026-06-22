@@ -1,3 +1,4 @@
+from app.services import noise_classification_service
 import torch
 import torchaudio
 import os
@@ -5,6 +6,8 @@ import logging
 import numpy as np
 from typing import Dict, Any, Optional
 from scipy.signal import resample_poly
+from math import gcd
+
 
 logger = logging.getLogger(__name__)
 
@@ -96,19 +99,36 @@ class NoiseSuppressionService:
             if audio_data.ndim > 1:
                 audio_data = np.mean(audio_data, axis=1)
 
+            '''
             # Resample to 16 kHz if needed
             if sr != self.SAMPLE_RATE:
-                from scipy.signal import resample_poly
+                #from scipy.signal import resample_poly
                 from math import gcd
                 g = gcd(self.SAMPLE_RATE, sr)
                 audio_data = resample_poly(
                     audio_data, self.SAMPLE_RATE // g, sr // g
                 ).astype(np.float32)
                 sr = self.SAMPLE_RATE
+            '''
+            #from scipy.signal import resample_poly
+            #from math import gcd
+
+            # Resample to 16 kHz if needed
+            if sr != self.SAMPLE_RATE:
+                g = gcd(self.SAMPLE_RATE, sr)
+
+                audio_data = resample_poly(
+                    audio_data,
+                    self.SAMPLE_RATE // g,  
+                    sr // g
+                ).astype(np.float32)
+
+                sr = self.SAMPLE_RATE
 
             if self._use_df:
                 try:
                     import torch
+
                     from df.enhance import enhance, init_df
 
                     # DeepFilterNet needs 48 kHz
@@ -123,9 +143,14 @@ class NoiseSuppressionService:
                     file_model, file_state, _ = init_df()
                     file_model.eval()
 
-                    audio_tensor = torch.from_numpy(up).unsqueeze(0).unsqueeze(0)
+                    audio_tensor = torch.from_numpy(up).float().unsqueeze(0)
+
                     with torch.no_grad():
-                        enhanced = enhance(file_model, file_state, audio_tensor)
+                        enhanced = enhance(
+                            file_model,
+                            file_state, 
+                            audio_tensor
+                        )
 
                     enhanced_np = enhanced.squeeze().numpy()
 
@@ -266,8 +291,12 @@ class NoiseSuppressionService:
 
             # ── 2. DeepFilterNet enhancement (stateful — preserves LSTM state) ──
             # enhance() requires shape (batch, channels, time) = (1, 1, T)
-            audio_tensor = torch.from_numpy(up).unsqueeze(0).unsqueeze(0)  # (1, 1, T_48k)
+            #audio_tensor = torch.from_numpy(up).unsqueeze(0).unsqueeze(0)  # (1, 1, T_48k)
+
+            audio_tensor = torch.from_numpy(up).float().unsqueeze(0)
             with torch.no_grad():
+                logger.info(f"DF input shape: {audio_tensor.shape}")
+                
                 enhanced = enhance(self._df_model, self._df_state, audio_tensor)
             # enhanced shape is (1, T) or (1, 1, T) — squeeze all unit dims safely
             enhanced_np = enhanced.squeeze().numpy()
