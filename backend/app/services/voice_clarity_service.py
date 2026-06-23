@@ -32,7 +32,7 @@ class VoiceClaritySettings:
         apply_bandpass: bool     = True,
         apply_preemphasis: bool  = True,
         apply_compression: bool  = True,
-        apply_dereveb: bool      = True,
+        apply_dereveb: bool      = False, #True,
         apply_normalisation: bool= True,
     ):
         self.bandpass_low_hz      = bandpass_low_hz
@@ -223,5 +223,6 @@ class VoiceClarityService:
     def _normalise(self, x: np.ndarray) -> np.ndarray:
         """Peak normalise to target_peak_db."""
         peak = np.max(np.abs(x)) + 1e-9
-        target_linear = 10 ** (self.cfg.target_peak_db / 20)
+       # target_linear = 10 ** (self.cfg.target_peak_db / 20)
+        target_linear = 0.95 
         return (x * (target_linear / peak)).astype(np.float32)
