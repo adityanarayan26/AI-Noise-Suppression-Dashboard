@@ -40,4 +40,12 @@ export const audioService = {
   getCloudinaryFiles: () => apiClient.get('/audio/files'),
 };
 
+export const mediaUrl = (url) => {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+  return `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+};
+
 export default apiClient;

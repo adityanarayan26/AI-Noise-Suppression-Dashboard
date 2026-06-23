@@ -9,7 +9,7 @@ import AudioWaveformCard from '../components/AudioWaveformCard';
 import AlertPanel from '../components/AlertPanel';
 import CloudinaryGallery from '../components/CloudinaryGallery';
 import NoiseSuppessionPanel from '../components/NoiseSuppessionPanel';
-import { healthService, metricsService, audioService } from '../services/api';
+import { healthService, metricsService, audioService, mediaUrl } from '../services/api';
 import { useAudioWebSocket } from '../hooks/useAudioWebSocket';
 
 const Dashboard = () => {
@@ -18,6 +18,8 @@ const Dashboard = () => {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploadCount, setUploadCount] = useState(0);
+  const [uploadedMetrics, setUploadedMetrics] = useState(null);
+  const [uploadedComparison, setUploadedComparison] = useState(null);
 
   // --- Live WebSocket connection ---
   const {
@@ -40,15 +42,22 @@ const Dashboard = () => {
   } = useAudioWebSocket();
 
   // Merge live metrics with REST-fetched fallback
-  const displayMetrics = isConnected
+  const liveDisplayMetrics = isConnected
     ? {
-        microphone_status: liveMetrics.microphone_status || 'connected',
-        noise_score: liveMetrics.noise_score ?? restMetrics?.noise_score ?? 0,
-        voice_clarity: liveMetrics.voice_clarity ?? restMetrics?.voice_clarity ?? 0,
-        latency: liveMetrics.latency ?? restMetrics?.latency ?? 0,
-        audio_quality: liveMetrics.audio_quality ?? restMetrics?.audio_quality ?? 0,
-      }
-    : restMetrics;
+      microphone_status: liveMetrics.microphone_status || 'connected',
+      noise_score: liveMetrics.noise_score ?? restMetrics?.noise_score ?? 0,
+      voice_clarity: liveMetrics.voice_clarity ?? restMetrics?.voice_clarity ?? 0,
+      latency: liveMetrics.latency ?? restMetrics?.latency ?? 0,
+      audio_quality: liveMetrics.audio_quality ?? restMetrics?.audio_quality ?? 0,
+      noise_class: liveMetrics.noise_class ?? restMetrics?.noise_class ?? 'Other',
+      snr_db: liveMetrics.snr_db ?? restMetrics?.snr_db ?? 0,
+      speech_presence: liveMetrics.speech_presence ?? restMetrics?.speech_presence ?? false,
+    }
+    : { ...restMetrics };
+
+  const displayMetrics = uploadedMetrics || liveDisplayMetrics;
+  const activeBars = uploadedMetrics?.waveform_bars || liveMetrics.waveform_bars || restMetrics?.waveform_bars;
+  const activeSource = uploadedMetrics ? 'Uploaded File' : 'Live Microphone';
 
   const fetchData = async () => {
     try {
@@ -58,7 +67,7 @@ const Dashboard = () => {
         audioService.getAlerts()
       ]);
       setSystemStatus(healthRes.data.status);
-      setRestMetrics(metricsRes.data);
+      setRestMetrics(prev => ({ ...prev, ...metricsRes.data }));
       setAlerts(alertsRes.data);
     } catch (err) {
       setSystemStatus('offline');
@@ -76,13 +85,28 @@ const Dashboard = () => {
 
   const handleUploadSuccess = (data) => {
     // Instantly update UI metrics from the processed audio file results
-    setRestMetrics({
+    const nextMetrics = {
       microphone_status: 'connected',
       noise_score: data.noise_score,
       voice_clarity: data.voice_clarity,
-      latency: restMetrics?.latency || 50,
-      audio_quality: data.audio_quality
+      latency: data.latency ?? restMetrics?.latency ?? 50,
+      audio_quality: data.audio_quality,
+      noise_class: data.noise_type,
+      noise_confidence: data.noise_confidence ?? 0,
+      snr_db: data.snr_db,
+      speech_presence: Boolean(data.speech_presence),
+      waveform_bars: data.waveform_bars,
+      engine: data.engine,
+      deepfilternet_active: data.deepfilternet_active,
+    };
+    setUploadedMetrics(nextMetrics);
+    setUploadedComparison({
+      beforeUrl: mediaUrl(data.original_audio_url),
+      afterUrl: mediaUrl(data.clean_audio_url),
+      snrBefore: data.snr_before_db,
+      snrAfter: data.snr_after_db,
     });
+    setRestMetrics(prev => ({ ...prev, ...nextMetrics }));
     // Refresh alerts to show the new classification log
     audioService.getAlerts().then((res) => {
       setAlerts(res.data);
@@ -90,6 +114,16 @@ const Dashboard = () => {
     // Trigger Cloudinary gallery refresh
     setUploadCount(prev => prev + 1);
   };
+
+  const clearUploadedMetrics = () => {
+    setUploadedMetrics(null);
+    setUploadedComparison(null);
+  };
+
+  const comparisonBeforeUrl = uploadedComparison?.beforeUrl || beforeUrl;
+  const comparisonAfterUrl = uploadedComparison?.afterUrl || afterUrl;
+  const comparisonSnrBefore = uploadedComparison?.snrBefore ?? snrBefore;
+  const comparisonSnrAfter = uploadedComparison?.snrAfter ?? snrAfter;
 
   if (loading && !restMetrics) {
     return (
@@ -110,7 +144,7 @@ const Dashboard = () => {
 
   return (
     <div className="h-full overflow-y-auto flex flex-col max-w-6xl mx-auto px-6 py-8">
-      <DashboardHeader systemStatus={isConnected ? 'ok' : systemStatus} />
+      <DashboardHeader systemStatus={isConnected ? 'online' : systemStatus} />
 
       <div className="flex flex-col gap-6 pb-12">
         {/* WebSocket error banner */}
@@ -132,13 +166,14 @@ const Dashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0">
           <div className="md:col-span-2 flex flex-col gap-6">
             <div className="flex-1 min-h-fit">
-              <AudioUploadCard onUploadSuccess={handleUploadSuccess} />
+              <AudioUploadCard onUploadSuccess={handleUploadSuccess} onReset={clearUploadedMetrics} />
             </div>
             <div className="min-h-fit">
               <AudioWaveformCard
-                bars={liveMetrics.waveform_bars}
-                suppressionEnabled={suppressionEnabled}
-                isConnected={isConnected}
+                bars={activeBars}
+                suppressionEnabled={uploadedMetrics ? true : suppressionEnabled}
+                isConnected={Boolean(uploadedMetrics) || isConnected}
+                sourceLabel={activeSource}
               />
             </div>
           </div>
@@ -157,19 +192,22 @@ const Dashboard = () => {
           togglePlayback={togglePlayback}
           isRecording={isRecording}
           isProcessing={isProcessing}
-          beforeUrl={beforeUrl}
-          afterUrl={afterUrl}
-          snrBefore={snrBefore}
-          snrAfter={snrAfter}
+          beforeUrl={comparisonBeforeUrl}
+          afterUrl={comparisonAfterUrl}
+          snrBefore={comparisonSnrBefore}
+          snrAfter={comparisonSnrAfter}
           recordAndProcess={recordAndProcess}
-          resetComparison={resetComparison}
-          noiseClass={liveMetrics.noise_class}
-          noiseConfidence={liveMetrics.noise_confidence}
-          snrDb={liveMetrics.snr_db}
-          speechPresence={liveMetrics.speech_presence}
-          isConnected={isConnected}
-          engine={liveMetrics.engine}
-          deepfilternetActive={liveMetrics.deepfilternet_active}
+          resetComparison={() => {
+            clearUploadedMetrics();
+            resetComparison();
+          }}
+          noiseClass={displayMetrics.noise_class}
+          noiseConfidence={displayMetrics.noise_confidence ?? liveMetrics.noise_confidence ?? 1.0}
+          snrDb={displayMetrics.snr_db}
+          speechPresence={displayMetrics.speech_presence}
+          isConnected={Boolean(uploadedMetrics) || isConnected}
+          engine={displayMetrics.engine ?? liveMetrics.engine}
+          deepfilternetActive={displayMetrics.deepfilternet_active ?? liveMetrics.deepfilternet_active}
         />
 
         {/* Cloudinary Gallery */}

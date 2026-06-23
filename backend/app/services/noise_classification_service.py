@@ -1,55 +1,231 @@
 """
 NoiseClassificationService
 --------------------------
-Classifies audio noise type using spectral + energy features.
+Classifies audio noise type using YAMNet (Yet Another Audio MobileNet),
+a lightweight MobileNet-based model pretrained on AudioSet (521 classes).
+
 Supports: background_noise, traffic, wind, keyboard, fan, music, speech, silence.
+
+Install deps:
+    pip install tensorflow tensorflow-hub numpy
+
+Optional (higher-quality resampling):
+    pip install resampy
+
+YAMNet weights (~3.7 MB) are downloaded automatically from TF Hub on first use.
 """
 
-import numpy as np
+from __future__ import annotations
+
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Optional heavy imports — deferred for test environments that mock inference.
+# ---------------------------------------------------------------------------
+try:
+    import tensorflow as tf
+    import tensorflow_hub as hub
+    _TF_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _TF_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Public types  (API-compatible with the original service)
+# ---------------------------------------------------------------------------
 
 class NoiseType(str, Enum):
-    SILENCE = "silence"
-    SPEECH = "speech"
+    SILENCE          = "silence"
+    SPEECH           = "speech"
     BACKGROUND_NOISE = "background_noise"
-    TRAFFIC = "traffic"
-    WIND = "wind"
-    KEYBOARD = "keyboard"
-    FAN = "fan"
-    MUSIC = "music"
-    UNKNOWN = "unknown"
+    TRAFFIC          = "traffic"
+    WIND             = "wind"
+    KEYBOARD         = "keyboard"
+    FAN              = "fan"
+    MUSIC            = "music"
+    UNKNOWN          = "unknown"
 
 
 @dataclass
 class ClassificationResult:
-    noise_type: NoiseType
-    confidence: float          # 0.0 – 1.0
-    snr_db: float              # estimated signal-to-noise ratio
-    rms_db: float              # RMS energy in dB
-    dominant_freq_hz: float    # dominant frequency bin
+    noise_type:       NoiseType
+    confidence:       float   # 0.0 – 1.0  (normalised bucket score)
+    snr_db:           float   # estimated SNR via min-statistics
+    rms_db:           float   # RMS energy in dBFS
+    dominant_freq_hz: float   # spectral peak frequency
 
+
+# ---------------------------------------------------------------------------
+# YAMNet AudioSet index → NoiseType mapping
+#
+# Indices come from the official class map (521 classes):
+#   https://raw.githubusercontent.com/tensorflow/models/master/research/
+#          audioset/yamnet/yamnet_class_map.csv
+#
+# Every index that belongs to a bucket is listed explicitly — no substring
+# matching, no false positives from coincidental label overlaps.
+# ---------------------------------------------------------------------------
+
+# fmt: off
+_YAMNET_INDEX_TO_NOISE_TYPE: dict[int, NoiseType] = {
+
+    # ── Silence ──────────────────────────────────────────────────────────
+    494: NoiseType.SILENCE,                     # Silence
+
+    # ── Speech ───────────────────────────────────────────────────────────
+      0: NoiseType.SPEECH,                      # Speech
+      1: NoiseType.SPEECH,                      # Child speech, kid speaking
+      5: NoiseType.SPEECH,                      # Speech synthesizer
+      6: NoiseType.SPEECH,                      # Shout
+     10: NoiseType.SPEECH,                      # Children shouting
+     12: NoiseType.SPEECH,                      # Whispering
+     65: NoiseType.SPEECH,                      # Hubbub, speech noise, speech babble
+
+    # ── Music ─────────────────────────────────────────────────────────────
+    132: NoiseType.MUSIC,                       # Music
+    133: NoiseType.MUSIC,                       # Musical instrument
+    211: NoiseType.MUSIC,                       # Pop music
+    212: NoiseType.MUSIC,                       # Hip hop music
+    214: NoiseType.MUSIC,                       # Rock music
+    222: NoiseType.MUSIC,                       # Soul music
+    225: NoiseType.MUSIC,                       # Swing music
+    228: NoiseType.MUSIC,                       # Folk music
+    229: NoiseType.MUSIC,                       # Middle Eastern music
+    232: NoiseType.MUSIC,                       # Classical music
+    234: NoiseType.MUSIC,                       # Electronic music
+    235: NoiseType.MUSIC,                       # House music
+    240: NoiseType.MUSIC,                       # Electronic dance music
+    241: NoiseType.MUSIC,                       # Ambient music
+    242: NoiseType.MUSIC,                       # Trance music
+    243: NoiseType.MUSIC,                       # Music of Latin America
+    244: NoiseType.MUSIC,                       # Salsa music
+    247: NoiseType.MUSIC,                       # Music for children
+    248: NoiseType.MUSIC,                       # New-age music
+    249: NoiseType.MUSIC,                       # Vocal music
+    251: NoiseType.MUSIC,                       # Music of Africa
+    253: NoiseType.MUSIC,                       # Christian music
+    254: NoiseType.MUSIC,                       # Gospel music
+    255: NoiseType.MUSIC,                       # Music of Asia
+    256: NoiseType.MUSIC,                       # Carnatic music
+    257: NoiseType.MUSIC,                       # Music of Bollywood
+    259: NoiseType.MUSIC,                       # Traditional music
+    260: NoiseType.MUSIC,                       # Independent music
+    262: NoiseType.MUSIC,                       # Background music
+    263: NoiseType.MUSIC,                       # Theme music
+    264: NoiseType.MUSIC,                       # Jingle (music)
+    265: NoiseType.MUSIC,                       # Soundtrack music
+    267: NoiseType.MUSIC,                       # Video game music
+    268: NoiseType.MUSIC,                       # Christmas music
+    269: NoiseType.MUSIC,                       # Dance music
+    270: NoiseType.MUSIC,                       # Wedding music
+    271: NoiseType.MUSIC,                       # Happy music
+    272: NoiseType.MUSIC,                       # Sad music
+    273: NoiseType.MUSIC,                       # Tender music
+    274: NoiseType.MUSIC,                       # Exciting music
+    275: NoiseType.MUSIC,                       # Angry music
+    276: NoiseType.MUSIC,                       # Scary music
+     24: NoiseType.MUSIC,                       # Singing
+     29: NoiseType.MUSIC,                       # Child singing
+     30: NoiseType.MUSIC,                       # Synthetic singing
+     32: NoiseType.MUSIC,                       # Humming (musical)
+
+    # ── Traffic ───────────────────────────────────────────────────────────
+    294: NoiseType.TRAFFIC,                     # Vehicle
+    300: NoiseType.TRAFFIC,                     # Motor vehicle (road)
+    301: NoiseType.TRAFFIC,                     # Car
+    302: NoiseType.TRAFFIC,                     # Vehicle horn, car horn, honking
+    304: NoiseType.TRAFFIC,                     # Car alarm
+    305: NoiseType.TRAFFIC,                     # Power windows, electric windows
+    308: NoiseType.TRAFFIC,                     # Car passing by
+    309: NoiseType.TRAFFIC,                     # Race car, auto racing
+    310: NoiseType.TRAFFIC,                     # Truck
+    312: NoiseType.TRAFFIC,                     # Air horn, truck horn
+    315: NoiseType.TRAFFIC,                     # Bus
+    316: NoiseType.TRAFFIC,                     # Emergency vehicle
+    317: NoiseType.TRAFFIC,                     # Police car (siren)
+    319: NoiseType.TRAFFIC,                     # Fire engine, fire truck (siren)
+    320: NoiseType.TRAFFIC,                     # Motorcycle
+    321: NoiseType.TRAFFIC,                     # Traffic noise, roadway noise
+
+    # ── Wind ──────────────────────────────────────────────────────────────
+    277: NoiseType.WIND,                        # Wind
+    279: NoiseType.WIND,                        # Wind noise (microphone)
+    201: NoiseType.WIND,                        # Wind chime
+
+    # ── Fan / HVAC ────────────────────────────────────────────────────────
+    406: NoiseType.FAN,                         # Mechanical fan
+    407: NoiseType.FAN,                         # Air conditioning
+    490: NoiseType.FAN,                         # Hum
+    510: NoiseType.FAN,                         # Mains hum
+    514: NoiseType.FAN,                         # White noise
+    515: NoiseType.FAN,                         # Pink noise
+
+    # ── Keyboard / typing ─────────────────────────────────────────────────
+    378: NoiseType.KEYBOARD,                    # Typing
+    380: NoiseType.KEYBOARD,                    # Computer keyboard
+    485: NoiseType.KEYBOARD,                    # Clicking
+    486: NoiseType.KEYBOARD,                    # Clickety-clack
+
+    # ── Generic background noise ──────────────────────────────────────────
+    507: NoiseType.BACKGROUND_NOISE,            # Noise
+    508: NoiseType.BACKGROUND_NOISE,            # Environmental noise
+    509: NoiseType.BACKGROUND_NOISE,            # Static
+     79: NoiseType.BACKGROUND_NOISE,            # Hiss
+}
+# fmt: on
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
 
 class NoiseClassificationService:
     """
-    Classifies the dominant noise type in an audio chunk using
-    lightweight spectral + temporal features (no heavy ML dependency).
+    Classifies the dominant noise type in an audio chunk using YAMNet,
+    a MobileNet-based model pretrained on AudioSet (521 classes).
+
+    Parameters
+    ----------
+    sample_rate : int
+        Native sample-rate of the incoming audio.  Audio is resampled to
+        16 kHz internally (YAMNet requirement).
+    silence_threshold_db : float
+        RMS level below which audio is classified as silence without running
+        inference.  Defaults to -60 dBFS.
+    min_confidence : float
+        Normalised bucket confidence below which the result is UNKNOWN.
+        Defaults to 0.20.
     """
 
-    SAMPLE_RATE: int = 48_000          # DeepFilterNet native SR
+    YAMNET_SAMPLE_RATE: int = 16_000   # YAMNet expects 16 kHz mono
+    YAMNET_HUB_URL: str = "https://tfhub.dev/google/yamnet/1"
+
+    # Spectral diagnostics
     FRAME_SIZE: int = 1024
-    HOP_SIZE: int = 512
+    HOP_SIZE:   int = 512
 
-    # Frequency band boundaries (Hz)
-    _BAND_LOW   = (20,   250)
-    _BAND_MID   = (250, 2_000)
-    _BAND_HIGH  = (2_000, 8_000)
-    _BAND_AIR   = (8_000, 20_000)
+    def __init__(
+        self,
+        sample_rate:          int   = 48_000,
+        silence_threshold_db: float = -60.0,
+        min_confidence:       float = 0.20,
+    ) -> None:
+        if not _TF_AVAILABLE:
+            raise ImportError(
+                "TensorFlow dependencies not installed.\n"
+                "Run: pip install tensorflow tensorflow-hub"
+            )
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE):
-        self.sample_rate = sample_rate
+        self.sample_rate          = sample_rate
+        self.silence_threshold_db = silence_threshold_db
+        self.min_confidence       = min_confidence
+
+        # Load YAMNet from TF Hub (downloads ~3.7 MB on first call).
+        self._model = hub.load(self.YAMNET_HUB_URL)
 
     # ------------------------------------------------------------------
     # Public API
@@ -59,150 +235,152 @@ class NoiseClassificationService:
         """
         Classify the noise type in *audio* (mono float32, shape [N]).
 
-        Args:
-            audio: 1-D numpy float32 array in [-1, 1].
+        Parameters
+        ----------
+        audio : np.ndarray
+            1-D (or 2-D stereo) float32 array in [-1, 1].
 
-        Returns:
-            ClassificationResult with noise_type, confidence, and diagnostics.
+        Returns
+        -------
+        ClassificationResult
         """
+        # ── Pre-processing ────────────────────────────────────────────
         if audio.ndim > 1:
-            audio = audio.mean(axis=0)          # stereo → mono
+            audio = audio.mean(axis=0)
         audio = audio.astype(np.float32)
 
-        rms = self._rms(audio)
-        rms_db = 20 * np.log10(rms + 1e-9)
+        # ── Diagnostics (computed on native-rate audio) ───────────────
+        rms    = self._rms(audio)
+        rms_db = float(20 * np.log10(rms + 1e-9))
 
-        if rms_db < -60:
+        # Fast-path: silence — skip inference entirely
+        if rms_db < self.silence_threshold_db:
             return ClassificationResult(
                 noise_type=NoiseType.SILENCE,
                 confidence=0.95,
                 snr_db=0.0,
-                rms_db=rms_db,
+                rms_db=round(rms_db, 2),
                 dominant_freq_hz=0.0,
             )
 
         spectrum, freqs = self._magnitude_spectrum(audio)
-        dom_freq = self._dominant_frequency(spectrum, freqs)
-        snr_db   = self._estimate_snr(audio)
+        dom_freq        = self._dominant_frequency(spectrum, freqs)
+        snr_db          = self._estimate_snr(audio)
 
-        low_e, mid_e, high_e, air_e = self._band_energies(spectrum, freqs)
-        zcr   = self._zero_crossing_rate(audio)
-        sf    = self._spectral_flatness(spectrum)
+        # ── Resample → 16 kHz for YAMNet ─────────────────────────────
+        audio_16k = self._resample(audio)
 
-        noise_type, confidence = self._classify_features(
-            rms_db, dom_freq, low_e, mid_e, high_e, air_e, zcr, sf, snr_db
-        )
+        # ── YAMNet inference ──────────────────────────────────────────
+        # Returns:
+        #   scores  – (num_frames, 521) per-frame class scores
+        #   embeddings – (num_frames, 1024) MobileNet embeddings
+        #   spectrogram – (num_frames, 64) log-mel spectrogram
+        scores, _embeddings, _spectrogram = self._model(audio_16k)
+
+        # Average scores across all frames → (521,)
+        mean_scores: np.ndarray = tf.reduce_mean(scores, axis=0).numpy()
+
+        # ── Map YAMNet scores → NoiseType buckets ─────────────────────
+        noise_type, confidence = self._aggregate_scores(mean_scores)
+
+        if confidence < self.min_confidence:
+            noise_type = NoiseType.UNKNOWN
+            confidence = float(np.max(mean_scores))
 
         return ClassificationResult(
             noise_type=noise_type,
-            confidence=confidence,
-            snr_db=snr_db,
-            rms_db=rms_db,
-            dominant_freq_hz=dom_freq,
+            confidence=round(float(confidence), 3),
+            snr_db=round(snr_db, 2),
+            rms_db=round(rms_db, 2),
+            dominant_freq_hz=round(dom_freq, 1),
         )
 
     def classify_batch(self, chunks: list[np.ndarray]) -> list[ClassificationResult]:
-        """Classify a list of audio chunks."""
+        """Classify a list of audio chunks sequentially."""
         return [self.classify(c) for c in chunks]
 
     # ------------------------------------------------------------------
-    # Feature extraction helpers
+    # YAMNet helpers
+    # ------------------------------------------------------------------
+
+    def _resample(self, audio: np.ndarray) -> tf.Tensor:
+        """
+        Resample *audio* from self.sample_rate → YAMNET_SAMPLE_RATE.
+        Uses resampy when available (polyphase, high quality), otherwise
+        falls back to tf.signal linear interpolation.
+        """
+        if self.sample_rate == self.YAMNET_SAMPLE_RATE:
+            return tf.constant(audio, dtype=tf.float32)
+
+        try:
+            import resampy
+            audio_16k = resampy.resample(
+                audio, self.sample_rate, self.YAMNET_SAMPLE_RATE
+            ).astype(np.float32)
+            return tf.constant(audio_16k, dtype=tf.float32)
+        except ImportError:
+            pass
+
+        # TF-native fallback: resize 1-D signal via linear interpolation
+        n_out = int(len(audio) * self.YAMNET_SAMPLE_RATE / self.sample_rate)
+        t = tf.constant(audio[None, :, None], dtype=tf.float32)   # (1, N, 1)
+        t = tf.image.resize(t, [1, n_out], method="bilinear")
+        return tf.squeeze(t, axis=[0, 2])
+
+    def _aggregate_scores(
+        self, scores: np.ndarray
+    ) -> tuple[NoiseType, float]:
+        """
+        Sum YAMNet per-class scores into NoiseType buckets.
+        Confidence is the winning bucket's share of all mapped scores.
+        """
+        bucket_scores: dict[NoiseType, float] = {t: 0.0 for t in NoiseType}
+        for idx, noise_type in _YAMNET_INDEX_TO_NOISE_TYPE.items():
+            if idx < len(scores):
+                bucket_scores[noise_type] += float(scores[idx])
+
+        bucket_scores.pop(NoiseType.UNKNOWN, None)   # UNKNOWN is a fallback only
+
+        total = sum(bucket_scores.values()) + 1e-9
+        if total <= 1e-9 or max(bucket_scores.values()) == 0.0:
+            return NoiseType.UNKNOWN, 0.0
+
+        best_type  = max(bucket_scores, key=lambda k: bucket_scores[k])
+        confidence = bucket_scores[best_type] / total
+        return best_type, min(float(confidence), 1.0)
+
+    # ------------------------------------------------------------------
+    # Spectral diagnostic helpers  (unchanged from original)
     # ------------------------------------------------------------------
 
     def _rms(self, audio: np.ndarray) -> float:
         return float(np.sqrt(np.mean(audio ** 2)))
 
-    def _magnitude_spectrum(self, audio: np.ndarray):
-        N = min(len(audio), 8192)
+    def _magnitude_spectrum(
+        self, audio: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        N        = min(len(audio), 8192)
         windowed = audio[:N] * np.hanning(N)
-        fft = np.abs(np.fft.rfft(windowed))
-        freqs = np.fft.rfftfreq(N, d=1.0 / self.sample_rate)
+        fft      = np.abs(np.fft.rfft(windowed))
+        freqs    = np.fft.rfftfreq(N, d=1.0 / self.sample_rate)
         return fft, freqs
 
-    def _dominant_frequency(self, spectrum: np.ndarray, freqs: np.ndarray) -> float:
-        idx = np.argmax(spectrum)
-        return float(freqs[idx])
+    def _dominant_frequency(
+        self, spectrum: np.ndarray, freqs: np.ndarray
+    ) -> float:
+        return float(freqs[np.argmax(spectrum)])
 
-    def _band_energy(self, spectrum, freqs, low, high) -> float:
-        mask = (freqs >= low) & (freqs < high)
-        if not mask.any():
-            return 0.0
-        return float(np.sum(spectrum[mask] ** 2))
-
-    def _band_energies(self, spectrum, freqs):
-        total = np.sum(spectrum ** 2) + 1e-9
-        low  = self._band_energy(spectrum, freqs, *self._BAND_LOW)  / total
-        mid  = self._band_energy(spectrum, freqs, *self._BAND_MID)  / total
-        high = self._band_energy(spectrum, freqs, *self._BAND_HIGH) / total
-        air  = self._band_energy(spectrum, freqs, *self._BAND_AIR)  / total
-        return low, mid, high, air
-
-    def _zero_crossing_rate(self, audio: np.ndarray) -> float:
-        signs = np.sign(audio)
-        signs[signs == 0] = 1
-        crossings = np.sum(np.diff(signs) != 0)
-        return float(crossings / len(audio))
-
-    def _spectral_flatness(self, spectrum: np.ndarray) -> float:
-        """Wiener entropy – 1 = white noise, 0 = tonal."""
-        eps = 1e-9
-        geom_mean = np.exp(np.mean(np.log(spectrum + eps)))
-        arith_mean = np.mean(spectrum) + eps
-        return float(geom_mean / arith_mean)
-
-    def _estimate_snr(self, audio: np.ndarray, percentile: float = 10) -> float:
-        """
-        Rough SNR estimate: compare loud frames vs quiet frames (min-statistics).
-        """
+    def _estimate_snr(
+        self, audio: np.ndarray, percentile: float = 10
+    ) -> float:
+        """Min-statistics SNR estimate (same algorithm as original)."""
         frame_rms = [
             self._rms(audio[i : i + self.FRAME_SIZE])
             for i in range(0, len(audio) - self.FRAME_SIZE, self.HOP_SIZE)
         ]
         if not frame_rms:
             return 0.0
-        noise_floor = np.percentile(frame_rms, percentile) + 1e-9
-        signal_peak = np.percentile(frame_rms, 90) + 1e-9
-        snr = 20 * np.log10(signal_peak / noise_floor)
+        noise_floor = float(np.percentile(frame_rms, percentile)) + 1e-9
+        signal_peak = float(np.percentile(frame_rms, 90))         + 1e-9
+        snr         = 20 * np.log10(signal_peak / noise_floor)
         return float(np.clip(snr, -20, 60))
-
-    # ------------------------------------------------------------------
-    # Classification logic
-    # ------------------------------------------------------------------
-
-    def _classify_features(
-        self,
-        rms_db, dom_freq,
-        low_e, mid_e, high_e, air_e,
-        zcr, sf, snr_db
-    ) -> tuple[NoiseType, float]:
-
-        # Speech: mid-band dominant, moderate ZCR, mid SNR
-        if mid_e > 0.40 and 80 < dom_freq < 4000 and 0.02 < zcr < 0.20:
-            conf = min(0.55 + mid_e * 0.5 + (snr_db / 60) * 0.2, 0.95)
-            return NoiseType.SPEECH, round(conf, 2)
-
-        # Music: broad spectrum, tonal (low flatness), strong mid+high
-        if sf < 0.15 and (mid_e + high_e) > 0.45 and snr_db > 10:
-            return NoiseType.MUSIC, round(min(0.60 + (0.15 - sf) * 2, 0.90), 2)
-
-        # Traffic: low-freq dominant, moderate flatness
-        if low_e > 0.50 and dom_freq < 400:
-            return NoiseType.TRAFFIC, round(min(0.55 + low_e * 0.4, 0.90), 2)
-
-        # Wind: very flat (white-ish), high air-band energy, high ZCR
-        if sf > 0.50 and air_e > 0.20 and zcr > 0.15:
-            return NoiseType.WIND, round(min(0.50 + sf * 0.4, 0.88), 2)
-
-        # Fan / HVAC: flat spectrum, low-mid dominant, continuous
-        if sf > 0.30 and low_e + mid_e > 0.60 and rms_db > -45:
-            return NoiseType.FAN, round(min(0.50 + sf * 0.3, 0.85), 2)
-
-        # Keyboard: impulsive (high ZCR), high-freq content, spiky
-        if zcr > 0.20 and high_e > 0.25:
-            return NoiseType.KEYBOARD, round(min(0.50 + zcr * 0.8, 0.85), 2)
-
-        # Generic background noise
-        if rms_db > -55:
-            return NoiseType.BACKGROUND_NOISE, 0.60
-
-        return NoiseType.UNKNOWN, 0.40
