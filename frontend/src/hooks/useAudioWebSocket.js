@@ -222,6 +222,10 @@ export function useAudioWebSocket() {
   // ─────────────────────────────────────────────────────────────────────────
   const startCapture = useCallback(async () => {
     try {
+      if (streamRef.current || audioCtxRef.current) {
+        setIsCapturing(true);
+        return;
+      }
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -433,7 +437,23 @@ export function useAudioWebSocket() {
     setIsProcessing(true);
     try {
       const response = await audioService.processAudio(rawWavBlob);
-      const { raw_audio_b64, suppressed_audio_b64, snr_before_db, snr_after_db } = response.data;
+      const {
+        raw_audio_b64,
+        suppressed_audio_b64,
+        snr_before_db,
+        snr_after_db,
+        noise_type,
+        noise_class,
+        noise_confidence,
+        noise_score,
+        voice_clarity,
+        audio_quality,
+        speech_presence,
+        snr_db,
+        waveform_bars,
+        engine,
+        deepfilternet_active,
+      } = response.data;
 
       // Decode base64 WAV → Blob → Object URL
       const toUrl = (b64) => {
@@ -447,6 +467,20 @@ export function useAudioWebSocket() {
       setAfterUrl(toUrl(suppressed_audio_b64));
       setSnrBefore(snr_before_db);
       setSnrAfter(snr_after_db);
+      setMetrics(prev => ({
+        ...prev,
+        microphone_status: 'connected',
+        noise_score: noise_score ?? prev.noise_score,
+        voice_clarity: voice_clarity ?? prev.voice_clarity,
+        audio_quality: audio_quality ?? prev.audio_quality,
+        noise_class: noise_class || noise_type || prev.noise_class,
+        noise_confidence: noise_confidence ?? prev.noise_confidence,
+        speech_presence: Boolean(speech_presence),
+        snr_db: snr_db ?? snr_before_db ?? prev.snr_db,
+        waveform_bars: waveform_bars || prev.waveform_bars,
+        engine: engine || prev.engine,
+        deepfilternet_active: deepfilternet_active ?? prev.deepfilternet_active,
+      }));
     } catch (err) {
       setError('Processing failed: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -475,6 +509,8 @@ export function useAudioWebSocket() {
     error,
     connect,
     disconnect,
+    startCapture,
+    stopCapture,
     // Live metrics
     metrics,
     // Live suppression toggle

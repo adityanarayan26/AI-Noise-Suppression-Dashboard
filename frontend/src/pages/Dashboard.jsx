@@ -29,6 +29,8 @@ const Dashboard = () => {
     metrics: liveMetrics,
     suppressionEnabled,
     toggleSuppression,
+    startCapture,
+    stopCapture,
     playbackEnabled,
     togglePlayback,
     isRecording,
@@ -50,8 +52,11 @@ const Dashboard = () => {
       latency: liveMetrics.latency ?? restMetrics?.latency ?? 0,
       audio_quality: liveMetrics.audio_quality ?? restMetrics?.audio_quality ?? 0,
       noise_class: liveMetrics.noise_class ?? restMetrics?.noise_class ?? 'Other',
+      noise_confidence: liveMetrics.noise_confidence ?? restMetrics?.noise_confidence ?? 0,
       snr_db: liveMetrics.snr_db ?? restMetrics?.snr_db ?? 0,
       speech_presence: liveMetrics.speech_presence ?? restMetrics?.speech_presence ?? false,
+      engine: liveMetrics.engine ?? restMetrics?.engine,
+      deepfilternet_active: liveMetrics.deepfilternet_active ?? restMetrics?.deepfilternet_active,
     }
     : { ...restMetrics };
 
@@ -124,6 +129,27 @@ const Dashboard = () => {
   const comparisonAfterUrl = uploadedComparison?.afterUrl || afterUrl;
   const comparisonSnrBefore = uploadedComparison?.snrBefore ?? snrBefore;
   const comparisonSnrAfter = uploadedComparison?.snrAfter ?? snrAfter;
+  const micIsLive = isConnected && isCapturing;
+
+  const handleToggleSuppression = async () => {
+    if (isConnected && !isCapturing) {
+      await startCapture();
+    }
+    toggleSuppression();
+  };
+
+  const handleToggleMic = async () => {
+    if (isCapturing) {
+      stopCapture();
+    } else {
+      await startCapture();
+    }
+  };
+
+  const handleRecordAndProcess = (durationSeconds) => {
+    clearUploadedMetrics();
+    return recordAndProcess(durationSeconds);
+  };
 
   if (loading && !restMetrics) {
     return (
@@ -172,7 +198,7 @@ const Dashboard = () => {
               <AudioWaveformCard
                 bars={activeBars}
                 suppressionEnabled={uploadedMetrics ? true : suppressionEnabled}
-                isConnected={Boolean(uploadedMetrics) || isConnected}
+                isConnected={Boolean(uploadedMetrics) || micIsLive}
                 sourceLabel={activeSource}
               />
             </div>
@@ -187,16 +213,18 @@ const Dashboard = () => {
         {/* Noise Suppression Panel — wired to live WebSocket */}
         <NoiseSuppessionPanel
           suppressionEnabled={suppressionEnabled}
-          toggleSuppression={toggleSuppression}
+          toggleSuppression={handleToggleSuppression}
           playbackEnabled={playbackEnabled}
           togglePlayback={togglePlayback}
+          isCapturing={isCapturing}
+          toggleMic={handleToggleMic}
           isRecording={isRecording}
           isProcessing={isProcessing}
           beforeUrl={comparisonBeforeUrl}
           afterUrl={comparisonAfterUrl}
           snrBefore={comparisonSnrBefore}
           snrAfter={comparisonSnrAfter}
-          recordAndProcess={recordAndProcess}
+          recordAndProcess={handleRecordAndProcess}
           resetComparison={() => {
             clearUploadedMetrics();
             resetComparison();
@@ -205,7 +233,7 @@ const Dashboard = () => {
           noiseConfidence={displayMetrics.noise_confidence ?? liveMetrics.noise_confidence ?? 1.0}
           snrDb={displayMetrics.snr_db}
           speechPresence={displayMetrics.speech_presence}
-          isConnected={Boolean(uploadedMetrics) || isConnected}
+          isConnected={isConnected}
           engine={displayMetrics.engine ?? liveMetrics.engine}
           deepfilternetActive={displayMetrics.deepfilternet_active ?? liveMetrics.deepfilternet_active}
         />

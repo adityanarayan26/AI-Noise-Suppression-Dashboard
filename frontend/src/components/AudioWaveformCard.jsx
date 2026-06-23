@@ -14,7 +14,7 @@ const MOCK_BARS = Array.from({ length: 50 }).map((_, i) => {
  *   suppressionEnabled {boolean} — changes bar colour when AI suppression is active.
  *   isConnected       {boolean} — drives the Live / Standby label & dot animation.
  */
-const AudioWaveformCard = ({ bars, suppressionEnabled, isConnected }) => {
+const AudioWaveformCard = ({ bars, suppressionEnabled, isConnected, sourceLabel = 'Live Microphone' }) => {
   // Always use 50 real bars when connected; fall back to the static mockup otherwise.
   const hasLiveBars = bars && bars.some(b => b > 0);
   const displayBars = hasLiveBars ? bars : MOCK_BARS;
@@ -33,7 +33,10 @@ const AudioWaveformCard = ({ bars, suppressionEnabled, isConnected }) => {
     <div className="h-full p-6 border border-zinc-300 rounded-xl bg-zinc-100/50 flex flex-col">
       {/* ── Header ── */}
       <div className="flex items-center justify-between mb-5 shrink-0">
-        <h3 className="text-sm font-medium text-zinc-900">Live Activity</h3>
+        <div>
+          <h3 className="text-sm font-medium text-zinc-900">Audio Activity</h3>
+          <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">{sourceLabel}</p>
+        </div>
         <div className="flex items-center gap-3">
           {/* Suppression badge */}
           {suppressionEnabled !== undefined && (

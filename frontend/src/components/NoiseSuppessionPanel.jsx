@@ -37,6 +37,8 @@ const NoiseSuppessionPanel = ({
   toggleSuppression,
   playbackEnabled,
   togglePlayback,
+  isCapturing,
+  toggleMic,
   isRecording,
   isProcessing,
   beforeUrl,
@@ -57,7 +59,7 @@ const NoiseSuppessionPanel = ({
   const timerRef = useRef(null);
 
   const handleRecord = () => {
-    if (isRecording || isProcessing || !isConnected) return;
+    if (isRecording || isProcessing || !isConnected || !isCapturing) return;
     setCountdown(RECORD_DURATION_S);
 
     // Tick the countdown display
@@ -118,6 +120,23 @@ const NoiseSuppessionPanel = ({
             <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
             {isConnected ? 'Live' : 'Offline'}
           </span>
+
+          <button
+            id="mic-toggle-btn"
+            onClick={toggleMic}
+            disabled={!isConnected}
+            className={`
+              relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold
+              uppercase tracking-widest border transition-all duration-200
+              ${isCapturing
+                ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100'
+                : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'}
+              disabled:opacity-40 disabled:cursor-not-allowed
+            `}
+          >
+            <span className={`w-2 h-2 rounded-full ${isCapturing ? 'bg-green-500 animate-pulse' : 'bg-zinc-400'}`} />
+            Mic {isCapturing ? 'ON' : 'OFF'}
+          </button>
 
           {/* Suppression toggle (controls live-stream mode only) */}
           <button
@@ -209,7 +228,7 @@ const NoiseSuppessionPanel = ({
         <button
           id="record-btn"
           onClick={handleRecord}
-          disabled={!isConnected || isRecording || isProcessing}
+          disabled={!isConnected || !isCapturing || isRecording || isProcessing}
           className={`
             flex items-center gap-3 px-8 py-3 rounded-xl text-sm font-semibold
             uppercase tracking-widest border-2 transition-all duration-200
@@ -237,6 +256,12 @@ const NoiseSuppessionPanel = ({
             </>
           )}
         </button>
+
+        {isConnected && !isCapturing && !isRecording && !isProcessing && (
+          <p className="text-xs text-amber-600 text-center">
+            Turn Mic ON to classify a 5s sample and animate live activity.
+          </p>
+        )}
 
         {!hasResults && !isRecording && !isProcessing && (
           <p className="text-xs text-zinc-400 text-center">
