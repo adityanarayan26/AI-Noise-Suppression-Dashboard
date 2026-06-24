@@ -279,6 +279,10 @@ export function useAudioWebSocket() {
           sampleRate: { ideal: TARGET_SAMPLE_RATE },
         },
       });
+      setMetrics(prev => ({
+        ...prev,
+        microphone_status: 'connected'
+      }));
       streamRef.current = stream;
 
       const ctx = new (window.AudioContext || window.webkitAudioContext)({
@@ -315,6 +319,10 @@ export function useAudioWebSocket() {
       startWaveformLoop();
       setIsCapturing(true);
     } catch (err) {
+      setMetrics(prev => ({
+        ...prev,
+        microphone_status: 'disconnected'
+      }));
       setError('Microphone access denied: ' + err.message);
     }
   }, [startWaveformLoop]);
