@@ -21,29 +21,29 @@ const AudioWaveformCard = ({ bars, suppressionEnabled, isConnected, sourceLabel 
 
   // Bar colour: green when suppression on, indigo when live (suppression off), gray in standby
   const barColour = !isConnected
-    ? 'bg-zinc-300'
+    ? 'bg-[var(--brand-200)]'
     : suppressionEnabled
-      ? 'bg-emerald-500'
-      : 'bg-indigo-500';
+      ? 'bg-[var(--brand-500)]'
+      : 'bg-[var(--brand-400)]';
 
   // Subtle opacity for standby bars so the animation is clearly "off"
   const barOpacity = isConnected ? 'opacity-90' : 'opacity-30';
 
   return (
-    <div className="h-full p-6 border border-zinc-300 rounded-xl bg-zinc-100/50 flex flex-col">
+    <div className="h-full p-6 border border-[var(--panel-border)] rounded-xl bg-[var(--panel-bg)] backdrop-blur-sm flex flex-col shadow-[0_14px_40px_rgba(0,135,64,0.08)]">
       {/* ── Header ── */}
       <div className="flex items-center justify-between mb-5 shrink-0">
         <div>
-          <h3 className="text-sm font-medium text-zinc-900">Audio Activity</h3>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">{sourceLabel}</p>
+          <h3 className="text-sm font-medium text-[var(--app-text)]">Audio Activity</h3>
+          <p className="text-[10px] text-[var(--brand-700)] uppercase tracking-widest mt-0.5">{sourceLabel}</p>
         </div>
         <div className="flex items-center gap-3">
           {/* Suppression badge */}
           {suppressionEnabled !== undefined && (
             <span
               className={`text-[10px] tracking-widest uppercase font-semibold px-2 py-0.5 rounded transition-all duration-300 ${suppressionEnabled
-                  ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
-                  : 'bg-zinc-200 text-zinc-500'
+                  ? 'bg-[var(--brand-100)] text-[var(--brand-700)] ring-1 ring-[var(--brand-300)]'
+                  : 'bg-[var(--brand-50)] text-[var(--brand-700)] ring-1 ring-[var(--brand-200)]'
                 }`}
             >
               {suppressionEnabled ? 'AI Suppression On' : 'Suppression Off'}
@@ -52,11 +52,11 @@ const AudioWaveformCard = ({ bars, suppressionEnabled, isConnected, sourceLabel 
 
           {/* Live / Standby indicator — driven by isConnected, not bar values */}
           <span
-            className={`text-[10px] tracking-widest uppercase flex items-center gap-1.5 font-medium transition-colors duration-300 ${isConnected ? 'text-zinc-700' : 'text-zinc-400'
+            className={`text-[10px] tracking-widest uppercase flex items-center gap-1.5 font-medium transition-colors duration-300 ${isConnected ? 'text-[var(--brand-700)]' : 'text-[var(--brand-300)]'
               }`}
           >
             {isConnected && (
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--brand-500)] animate-pulse inline-block" />
             )}
             {isConnected ? 'Live' : 'Standby'}
           </span>

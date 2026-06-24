@@ -1,14 +1,48 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #0f172a;
-  --color-surface: #1e293b;
-  --color-border: #334155;
+  --color-background: #f5fff8;
+  --color-surface: #ffffff;
+  --color-border: #cce8d8;
+
+  --color-primary: #008740;
+  --color-primary-dark: #006633;
+  --color-primary-light: #e8f8ef;
+
+  --color-text: #1a1a1a;
+  --color-text-light: #4b5563;
+}
+
+:root {
+  --brand-50: #f2fbf6;
+  --brand-100: #def4e7;
+  --brand-200: #b9e8cc;
+  --brand-300: #8ed7aa;
+  --brand-400: #52be7f;
+  --brand-500: #008740;
+  --brand-600: #006f35;
+  --brand-700: #00592b;
+  --brand-800: #0f3d22;
+  --brand-900: #0a2414;
+  --app-bg: #f4fbf6;
+  --app-text: #102418;
+  --panel-bg: rgba(255, 255, 255, 0.74);
+  --panel-border: rgba(0, 135, 64, 0.16);
+}
+
+html {
+  background: var(--app-bg);
 }
 
 body {
-  background-color: var(--color-background);
-  color: white;
-  margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(0, 135, 64, 0.12), transparent 32%),
+    radial-gradient(circle at top right, rgba(82, 190, 127, 0.14), transparent 26%),
+    linear-gradient(180deg, #f7fdf9 0%, #edf8f0 100%);
+  color: var(--app-text);
+}
+
+#root {
+  min-height: 100vh;
 }

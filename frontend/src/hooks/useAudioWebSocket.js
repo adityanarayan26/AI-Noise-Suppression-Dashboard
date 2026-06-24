@@ -30,6 +30,7 @@ const TARGET_SAMPLE_RATE = 16000;
 // Frame size: 1024 samples @ 16 kHz ≈ 64 ms per frame
 // (Previously 4096 ≈ 256 ms — reduced for lower interview latency)
 const FRAME_SAMPLES = 1024;
+const WAVEFORM_BAR_COUNT = 50;
 
 export function useAudioWebSocket() {
   // --- Connection state ---
@@ -55,6 +56,7 @@ export function useAudioWebSocket() {
     engine: 'unknown',
     deepfilternet_active: false,
   });
+  const [liveWaveformBars, setLiveWaveformBars] = useState(Array(WAVEFORM_BAR_COUNT).fill(0));
 
   // --- Suppression toggle (for live streaming) ---
   const [suppressionEnabled, setSuppressionEnabled] = useState(false);
@@ -78,6 +80,9 @@ export function useAudioWebSocket() {
   const audioCtxRef = useRef(null);
   const sourceNodeRef = useRef(null);
   const processorNodeRef = useRef(null);
+  const analyserNodeRef = useRef(null);
+  const waveformFrameRef = useRef(null);
+  const waveformDataRef = useRef(null);
   const streamRef = useRef(null);
   const pcmBufferRef = useRef([]);        // accumulates Int16 samples for one WS frame
   const recordChunksRef = useRef([]);     // raw frames captured during recordAndProcess
@@ -217,6 +222,45 @@ export function useAudioWebSocket() {
   const onAudioProcessRef = useRef(onAudioProcess);
   useEffect(() => { onAudioProcessRef.current = onAudioProcess; }, [onAudioProcess]);
 
+  const stopWaveformLoop = useCallback(() => {
+    if (waveformFrameRef.current) {
+      cancelAnimationFrame(waveformFrameRef.current);
+      waveformFrameRef.current = null;
+    }
+  }, []);
+
+  const startWaveformLoop = useCallback(() => {
+    if (!analyserNodeRef.current) return;
+    if (!waveformDataRef.current || waveformDataRef.current.length !== analyserNodeRef.current.fftSize) {
+      waveformDataRef.current = new Float32Array(analyserNodeRef.current.fftSize);
+    }
+
+    const renderBars = () => {
+      const analyser = analyserNodeRef.current;
+      const waveformData = waveformDataRef.current;
+      if (!analyser || !waveformData) return;
+
+      analyser.getFloatTimeDomainData(waveformData);
+      const step = Math.max(1, Math.floor(waveformData.length / WAVEFORM_BAR_COUNT));
+      const nextBars = Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) => {
+        const start = index * step;
+        const end = Math.min(waveformData.length, start + step);
+        let peak = 0;
+        for (let i = start; i < end; i++) {
+          const amplitude = Math.abs(waveformData[i]);
+          if (amplitude > peak) peak = amplitude;
+        }
+        return Math.max(4, Math.min(100, Math.round(peak * 220)));
+      });
+
+      setLiveWaveformBars(nextBars);
+      waveformFrameRef.current = requestAnimationFrame(renderBars);
+    };
+
+    stopWaveformLoop();
+    renderBars();
+  }, [stopWaveformLoop]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // Start capturing microphone
   // ─────────────────────────────────────────────────────────────────────────
@@ -245,6 +289,11 @@ export function useAudioWebSocket() {
       const source = ctx.createMediaStreamSource(stream);
       sourceNodeRef.current = source;
 
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.72;
+      analyserNodeRef.current = analyser;
+
       const bufferSize = 4096;
       const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
       processorNodeRef.current = processor;
@@ -258,20 +307,23 @@ export function useAudioWebSocket() {
       const gainNode = ctx.createGain();
       gainNode.gain.value = 0;
 
+      source.connect(analyser);
       source.connect(processor);
       processor.connect(gainNode);
       gainNode.connect(ctx.destination);
 
+      startWaveformLoop();
       setIsCapturing(true);
     } catch (err) {
       setError('Microphone access denied: ' + err.message);
     }
-  }, []);
+  }, [startWaveformLoop]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Stop capturing
   // ─────────────────────────────────────────────────────────────────────────
   const stopCapture = useCallback(() => {
+    stopWaveformLoop();
     if (processorNodeRef.current) {
       processorNodeRef.current.disconnect();
       processorNodeRef.current = null;
@@ -279,6 +331,10 @@ export function useAudioWebSocket() {
     if (sourceNodeRef.current) {
       sourceNodeRef.current.disconnect();
       sourceNodeRef.current = null;
+    }
+    if (analyserNodeRef.current) {
+      analyserNodeRef.current.disconnect();
+      analyserNodeRef.current = null;
     }
     if (audioCtxRef.current) {
       audioCtxRef.current.close();
@@ -294,8 +350,10 @@ export function useAudioWebSocket() {
     }
     pcmBufferRef.current = [];
     nextPlayTimeRef.current = 0;
+    waveformDataRef.current = null;
+    setLiveWaveformBars(Array(WAVEFORM_BAR_COUNT).fill(0));
     setIsCapturing(false);
-  }, []);
+  }, [stopWaveformLoop]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // WebSocket connection
@@ -513,6 +571,7 @@ export function useAudioWebSocket() {
     stopCapture,
     // Live metrics
     metrics,
+    liveWaveformBars,
     // Live suppression toggle
     suppressionEnabled,
     toggleSuppression,

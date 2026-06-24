@@ -94,17 +94,17 @@ const NoiseSuppessionPanel = ({
   // Engine display
   const engineLabel = deepfilternetActive ? 'DeepFilterNet' : 'Spectral Subtraction';
   const engineColor = deepfilternetActive
-    ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+    ? 'bg-[var(--brand-100)] text-[var(--brand-700)] border-[var(--brand-300)]'
     : 'bg-amber-100 text-amber-700 border-amber-300';
 
   return (
-    <div className="shrink-0 mt-6 border border-zinc-300 rounded-xl bg-zinc-100/50 p-6">
+    <div className="shrink-0 mt-6 border border-[var(--panel-border)] rounded-xl bg-[var(--panel-bg)] backdrop-blur-sm p-6 shadow-[0_14px_40px_rgba(0,135,64,0.08)]">
 
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div>
-          <h3 className="text-sm font-medium text-zinc-900">Noise Suppression Comparison</h3>
-          <p className="text-xs text-zinc-500 mt-0.5">
+          <h3 className="text-sm font-medium text-[var(--app-text)]">Noise Suppression Comparison</h3>
+          <p className="text-xs text-[var(--brand-700)] mt-0.5">
             Record once — hear the difference before and after AI processing
           </p>
         </div>
@@ -116,8 +116,8 @@ const NoiseSuppessionPanel = ({
           </span>
 
           {/* Live indicator */}
-          <span className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider ${isConnected ? 'text-zinc-700' : 'text-red-500'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+          <span className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider ${isConnected ? 'text-[var(--brand-700)]' : 'text-red-500'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[var(--brand-500)] animate-pulse' : 'bg-red-500'}`} />
             {isConnected ? 'Live' : 'Offline'}
           </span>
 
@@ -129,12 +129,12 @@ const NoiseSuppessionPanel = ({
               relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold
               uppercase tracking-widest border transition-all duration-200
               ${isCapturing
-                ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100'
+                ? 'bg-[var(--brand-50)] text-[var(--brand-700)] border-[var(--brand-300)] hover:bg-[var(--brand-100)]'
                 : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'}
               disabled:opacity-40 disabled:cursor-not-allowed
             `}
           >
-            <span className={`w-2 h-2 rounded-full ${isCapturing ? 'bg-green-500 animate-pulse' : 'bg-zinc-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${isCapturing ? 'bg-[var(--brand-500)] animate-pulse' : 'bg-zinc-400'}`} />
             Mic {isCapturing ? 'ON' : 'OFF'}
           </button>
 
@@ -147,12 +147,12 @@ const NoiseSuppessionPanel = ({
               relative inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold
               uppercase tracking-widest border transition-all duration-200
               ${suppressionEnabled
-                ? 'bg-zinc-900 text-white border-zinc-900 hover:bg-zinc-700'
+                ? 'bg-[var(--brand-500)] text-white border-[var(--brand-500)] hover:bg-[var(--brand-600)]'
                 : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'}
               disabled:opacity-40 disabled:cursor-not-allowed
             `}
           >
-            <span className={`w-2 h-2 rounded-full ${suppressionEnabled ? 'bg-green-400' : 'bg-zinc-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${suppressionEnabled ? 'bg-[var(--brand-200)]' : 'bg-zinc-400'}`} />
             Suppression {suppressionEnabled ? 'ON' : 'OFF'}
           </button>
 
@@ -166,7 +166,7 @@ const NoiseSuppessionPanel = ({
                 relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold
                 uppercase tracking-widest border transition-all duration-200
                 ${playbackEnabled
-                  ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-500'
+                  ? 'bg-[var(--brand-700)] text-white border-[var(--brand-700)] hover:bg-[var(--brand-600)]'
                   : 'bg-white text-zinc-600 border-zinc-300 hover:bg-zinc-50'}
                 disabled:opacity-40 disabled:cursor-not-allowed
               `}
@@ -181,7 +181,7 @@ const NoiseSuppessionPanel = ({
 
       {/* Headphone warning when playback is active */}
       {playbackEnabled && suppressionEnabled && (
-        <div className="mb-4 p-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-medium flex items-center gap-2">
+        <div className="mb-4 p-2.5 rounded-lg bg-[var(--brand-50)] border border-[var(--brand-200)] text-[var(--brand-700)] text-xs font-medium flex items-center gap-2">
           <span>🎧</span>
           <span>Use headphones to avoid audio feedback. You're hearing the AI-cleaned audio in real-time.</span>
         </div>
@@ -236,7 +236,7 @@ const NoiseSuppessionPanel = ({
               ? 'bg-red-50 border-red-400 text-red-600 cursor-not-allowed'
               : isProcessing
                 ? 'bg-zinc-100 border-zinc-300 text-zinc-400 cursor-not-allowed'
-                : 'bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed'}
+                : 'bg-[var(--brand-500)] border-[var(--brand-500)] text-white hover:bg-[var(--brand-600)] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed'}
           `}
         >
           {isRecording ? (
@@ -288,8 +288,8 @@ const NoiseSuppessionPanel = ({
           <AudioCard
             id="after"
             label="After"
-            labelClass="bg-zinc-900 text-white"
-            cardClass="border-zinc-900"
+            labelClass="bg-[var(--brand-500)] text-white"
+            cardClass="border-[var(--brand-500)]"
             description="AI noise suppression applied"
             audioUrl={afterUrl}
             snrDb={snrAfter}
@@ -303,7 +303,7 @@ const NoiseSuppessionPanel = ({
           <button
             id="reset-comparison-btn"
             onClick={resetComparison}
-            className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-2 transition-colors"
+            className="text-xs text-[var(--brand-700)] hover:text-[var(--brand-900)] underline underline-offset-2 transition-colors"
           >
             Clear recordings &amp; reset noise profile
           </button>
@@ -341,7 +341,7 @@ const AudioCard = ({ id, label, labelClass, cardClass, description, audioUrl, sn
       controls
       src={audioUrl}
       className="w-full h-8 rounded"
-      style={{ accentColor: '#18181b' }}
+      style={{ accentColor: '#008740' }}
     />
   </div>
 );

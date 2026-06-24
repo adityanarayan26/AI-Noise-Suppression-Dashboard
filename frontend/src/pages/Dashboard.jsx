@@ -27,6 +27,7 @@ const Dashboard = () => {
     isCapturing,
     error: wsError,
     metrics: liveMetrics,
+    liveWaveformBars,
     suppressionEnabled,
     toggleSuppression,
     startCapture,
@@ -61,8 +62,6 @@ const Dashboard = () => {
     : { ...restMetrics };
 
   const displayMetrics = uploadedMetrics || liveDisplayMetrics;
-  const activeBars = uploadedMetrics?.waveform_bars || liveMetrics.waveform_bars || restMetrics?.waveform_bars;
-  const activeSource = uploadedMetrics ? 'Uploaded File' : 'Live Microphone';
 
   const fetchData = async () => {
     try {
@@ -130,6 +129,11 @@ const Dashboard = () => {
   const comparisonSnrBefore = uploadedComparison?.snrBefore ?? snrBefore;
   const comparisonSnrAfter = uploadedComparison?.snrAfter ?? snrAfter;
   const micIsLive = isConnected && isCapturing;
+  const activeBars = uploadedMetrics?.waveform_bars
+    || (micIsLive ? liveWaveformBars : null)
+    || liveMetrics.waveform_bars
+    || restMetrics?.waveform_bars;
+  const activeSource = uploadedMetrics ? 'Uploaded File' : 'Live Microphone';
 
   const handleToggleSuppression = async () => {
     if (isConnected && !isCapturing) {
@@ -153,8 +157,8 @@ const Dashboard = () => {
 
   if (loading && !restMetrics) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-400 gap-4">
-        <div className="h-7 w-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="min-h-screen flex flex-col items-center justify-center text-slate-400 gap-4">
+        <div className="h-7 w-7 border-2 border-[var(--brand-500)] border-t-transparent rounded-full animate-spin"></div>
         <div className="text-[10px] tracking-widest uppercase font-semibold text-slate-500">
           Loading Dashboard...
         </div>
