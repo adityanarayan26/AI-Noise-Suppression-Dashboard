@@ -42,6 +42,7 @@ const Dashboard = () => {
     snrAfter,
     recordAndProcess,
     resetComparison,
+    getAnalyserNode,
   } = useAudioWebSocket();
 
   // Merge live metrics with REST-fetched fallback
@@ -131,8 +132,23 @@ const Dashboard = () => {
   const micIsLive = isConnected && isCapturing;
   const activeBars = uploadedMetrics?.waveform_bars
     || (micIsLive ? liveWaveformBars : null)
+    || (isConnected ? liveWaveformBars : null)   // WS connected but not yet capturing
     || liveMetrics.waveform_bars
     || restMetrics?.waveform_bars;
+
+  // Debug logging
+  React.useEffect(() => {
+    console.log('📈 Dashboard waveform state:', {
+      isConnected,
+      isCapturing,
+      micIsLive,
+      uploadedMetrics: !!uploadedMetrics,
+      liveWaveformBars: `[${liveWaveformBars.length} bars, max=${Math.max(...liveWaveformBars)}]`,
+      liveMetrics_waveform: liveMetrics.waveform_bars ? 'yes' : 'no',
+      restMetrics_waveform: restMetrics?.waveform_bars ? 'yes' : 'no',
+      activeBars: activeBars ? `[${activeBars.length} bars, max=${Math.max(...activeBars)}]` : 'null',
+    });
+  }, [isConnected, isCapturing, liveWaveformBars, activeBars, liveMetrics, restMetrics, uploadedMetrics]);
   const activeSource = uploadedMetrics ? 'Uploaded File' : 'Live Microphone';
 
   const handleToggleSuppression = async () => {
@@ -202,7 +218,10 @@ const Dashboard = () => {
               <AudioWaveformCard
                 bars={activeBars}
                 suppressionEnabled={uploadedMetrics ? true : suppressionEnabled}
-                isConnected={Boolean(uploadedMetrics) || micIsLive}
+                isConnected={Boolean(uploadedMetrics) || isConnected}
+                isLive={micIsLive || isRecording}
+                isRecording={isRecording}
+                getAnalyserNode={micIsLive || isRecording ? getAnalyserNode : undefined}
                 sourceLabel={activeSource}
               />
             </div>

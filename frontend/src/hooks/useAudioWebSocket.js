@@ -57,6 +57,8 @@ export function useAudioWebSocket() {
     deepfilternet_active: false,
   });
   const [liveWaveformBars, setLiveWaveformBars] = useState(Array(WAVEFORM_BAR_COUNT).fill(0));
+  // Expose the analyser node for direct canvas drawing (avoids React state lag)
+  const getAnalyserNode = useCallback(() => analyserNodeRef.current, []);
 
   // --- Suppression toggle (for live streaming) ---
   const [suppressionEnabled, setSuppressionEnabled] = useState(false);
@@ -242,6 +244,16 @@ export function useAudioWebSocket() {
 
       analyser.getFloatTimeDomainData(waveformData);
       const step = Math.max(1, Math.floor(waveformData.length / WAVEFORM_BAR_COUNT));
+
+      // Find the overall peak in this frame for dynamic normalization
+      let framePeak = 0;
+      for (let i = 0; i < waveformData.length; i++) {
+        const a = Math.abs(waveformData[i]);
+        if (a > framePeak) framePeak = a;
+      }
+      // Use a floor so tiny frames still show some activity
+      const normalizer = Math.max(framePeak, 0.01);
+
       const nextBars = Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) => {
         const start = index * step;
         const end = Math.min(waveformData.length, start + step);
@@ -250,7 +262,9 @@ export function useAudioWebSocket() {
           const amplitude = Math.abs(waveformData[i]);
           if (amplitude > peak) peak = amplitude;
         }
-        return Math.max(4, Math.min(100, Math.round(peak * 220)));
+        // Scale relative to frame peak so bars span the full height range
+        const scaled = (peak / normalizer) * 90; // 90% max so bars breathe
+        return Math.max(3, Math.min(100, Math.round(scaled)));
       });
 
       setLiveWaveformBars(nextBars);
@@ -267,9 +281,12 @@ export function useAudioWebSocket() {
   const startCapture = useCallback(async () => {
     try {
       if (streamRef.current || audioCtxRef.current) {
+        console.log('🎤 startCapture: reusing existing stream/ctx');
+        startWaveformLoop();  // restart loop in case it was stopped
         setIsCapturing(true);
         return;
       }
+      console.log('🎤 startCapture: requesting microphone...');
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -279,10 +296,6 @@ export function useAudioWebSocket() {
           sampleRate: { ideal: TARGET_SAMPLE_RATE },
         },
       });
-      setMetrics(prev => ({
-        ...prev,
-        microphone_status: 'connected'
-      }));
       streamRef.current = stream;
 
       const ctx = new (window.AudioContext || window.webkitAudioContext)({
@@ -294,7 +307,7 @@ export function useAudioWebSocket() {
       sourceNodeRef.current = source;
 
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
+      analyser.fftSize = 4096;          // match ScriptProcessor bufferSize for stable reads
       analyser.smoothingTimeConstant = 0.72;
       analyserNodeRef.current = analyser;
 
@@ -318,11 +331,9 @@ export function useAudioWebSocket() {
 
       startWaveformLoop();
       setIsCapturing(true);
+      console.log('🎤 startCapture: success, waveform loop started');
     } catch (err) {
-      setMetrics(prev => ({
-        ...prev,
-        microphone_status: 'disconnected'
-      }));
+      console.error('🎤 startCapture error:', err);
       setError('Microphone access denied: ' + err.message);
     }
   }, [startWaveformLoop]);
@@ -373,13 +384,17 @@ export function useAudioWebSocket() {
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
-    ws.onopen = () => setIsConnected(true);
+    ws.onopen = () => {
+      console.log('🌐 WebSocket connected');
+      setIsConnected(true);
+    };
 
     ws.onmessage = (event) => {
       if (typeof event.data === 'string') {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'metrics') {
+            console.log('📡 Metrics received:', { noise_score: data.noise_score, voice_clarity: data.voice_clarity });
             setMetrics(prev => ({ ...prev, ...data }));
 
             // Real-time cleaned audio playback
@@ -398,11 +413,13 @@ export function useAudioWebSocket() {
     };
 
     ws.onclose = () => {
+      console.log('🌐 WebSocket closed');
       setIsConnected(false);
       wsRef.current = null;
     };
 
     ws.onerror = () => {
+      console.error('🌐 WebSocket error');
       setError('WebSocket connection failed. Is the backend running?');
     };
   }, [playCleanedAudio]);
@@ -580,6 +597,8 @@ export function useAudioWebSocket() {
     // Live metrics
     metrics,
     liveWaveformBars,
+    // Direct analyser access for canvas drawing
+    getAnalyserNode,
     // Live suppression toggle
     suppressionEnabled,
     toggleSuppression,

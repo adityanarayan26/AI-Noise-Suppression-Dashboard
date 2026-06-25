@@ -149,7 +149,8 @@ class NoiseSuppressionService:
                         enhanced = enhance(
                             file_model,
                             file_state, 
-                            audio_tensor
+                            audio_tensor,
+                            atten_lim_db=20
                         )
 
                     enhanced_np = enhanced.squeeze().numpy()
