@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -11,11 +12,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup diagnostics then yield to serve requests."""
+    # ── Startup ──────────────────────────────────────────────────────────
+    try:
+        import df  # noqa: F401
+        from df.enhance import init_df
+        logger.info("══════════════════════════════════════════════════════")
+        logger.info("  DeepFilterNet package:  ✓ INSTALLED")
+        _model, _state, _ = init_df()
+        logger.info("  DeepFilterNet model:    ✓ LOADED SUCCESSFULLY")
+        del _model, _state
+        logger.info("══════════════════════════════════════════════════════")
+    except ImportError:
+        logger.warning("══════════════════════════════════════════════════════")
+        logger.warning("  DeepFilterNet package:  ✗ NOT INSTALLED")
+        logger.warning("  Install with:  pip install deepfilternet")
+        logger.warning("  Falling back to spectral subtraction.")
+        logger.warning("══════════════════════════════════════════════════════")
+    except Exception as exc:
+        logger.error("══════════════════════════════════════════════════════")
+        logger.error("  DeepFilterNet package:  ✓ installed")
+        logger.error("  DeepFilterNet model:    ✗ FAILED TO LOAD")
+        logger.error("  Error: %s", exc)
+        logger.error("══════════════════════════════════════════════════════")
+
+    yield  # Application is running
+    # ── Shutdown ─────────────────────────────────────────────────────────
+    logger.info("Server shutting down.")
+
+
 app = FastAPI(
     title="AI Interview Audio Monitoring Backend",
     description="Backend API for the audio monitoring dashboard.",
     version="1.0.0",
+    lifespan=lifespan,
 )
+
 
 # Configure CORS
 app.add_middleware(
@@ -35,37 +70,6 @@ app.include_router(health.router)
 app.include_router(metrics.router)
 app.include_router(audio.router)
 app.include_router(ws_audio.router)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Startup diagnostics
-# ─────────────────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup_diagnostics():
-    """Log whether DeepFilterNet is available at server boot."""
-    try:
-        import df  # noqa: F401
-        from df.enhance import init_df
-        logger.info("══════════════════════════════════════════════════════")
-        logger.info("  DeepFilterNet package:  ✓ INSTALLED")
-        # Quick probe — load & immediately discard to verify model files exist.
-        _model, _state, _ = init_df()
-        logger.info("  DeepFilterNet model:    ✓ LOADED SUCCESSFULLY")
-        del _model, _state
-        logger.info("══════════════════════════════════════════════════════")
-    except ImportError:
-        logger.warning("══════════════════════════════════════════════════════")
-        logger.warning("  DeepFilterNet package:  ✗ NOT INSTALLED")
-        logger.warning("  Install with:  pip install deepfilternet")
-        logger.warning("  Falling back to spectral subtraction.")
-        logger.warning("══════════════════════════════════════════════════════")
-    except Exception as exc:
-        logger.error("══════════════════════════════════════════════════════")
-        logger.error("  DeepFilterNet package:  ✓ installed")
-        logger.error("  DeepFilterNet model:    ✗ FAILED TO LOAD")
-        logger.error("  Error: %s", exc)
-        logger.error("══════════════════════════════════════════════════════")
 
 
 @app.get("/api/deepfilter/status", tags=["Diagnostics"])

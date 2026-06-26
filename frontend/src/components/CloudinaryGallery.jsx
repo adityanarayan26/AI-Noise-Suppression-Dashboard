@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { audioService } from '../services/api';
 
+import AudioPlayer from 'react-h5-audio-player';
+import 'react-h5-audio-player/lib/styles.css';
+import '../audioPlayer.css';
+
+
+
 const CloudinaryGallery = ({ refreshTrigger }) => {
     const [files, setFiles] = useState({ before: [], after: [] });
     const [loading, setLoading] = useState(true);
@@ -36,29 +42,34 @@ const CloudinaryGallery = ({ refreshTrigger }) => {
 
     const currentFiles = activeTab === 'before' ? files.before : files.after;
 
+    const formatDate = (isoDate) => {
+        return new Date(isoDate).toLocaleString("en-IN", {
+            dateStyle: "medium",
+            timeStyle: "short",
+        });
+    };
+
     return (
         <div className="mt-8 border-t border-zinc-300 pt-8">
             <h2 className="text-lg font-medium text-zinc-900 mb-6">Cloudinary Audio Gallery</h2>
-            
+
             {/* Tabs */}
             <div className="flex space-x-2 border-b border-zinc-200 mb-6">
                 <button
                     onClick={() => setActiveTab('before')}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                        activeTab === 'before' 
-                        ? 'border-zinc-900 text-zinc-900' 
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'before'
+                        ? 'border-zinc-900 text-zinc-900'
                         : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
-                    }`}
+                        }`}
                 >
                     Before Suppression (Raw)
                 </button>
                 <button
                     onClick={() => setActiveTab('after')}
-                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                        activeTab === 'after' 
-                        ? 'border-zinc-900 text-zinc-900' 
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'after'
+                        ? 'border-zinc-900 text-zinc-900'
                         : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
-                    }`}
+                        }`}
                 >
                     After Suppression (Cleaned)
                 </button>
@@ -76,11 +87,37 @@ const CloudinaryGallery = ({ refreshTrigger }) => {
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto pr-2">
                         {currentFiles.map((file, idx) => (
-                            <div key={idx} className="bg-white p-4 border border-zinc-200 rounded-lg shadow-sm hover:border-zinc-300 transition-colors">
-                                <span className="text-xs font-medium text-zinc-700 break-all mb-3 block truncate" title={file.id}>
-                                    {file.id}
-                                </span>
-                                <audio src={file.url} controls className="w-full h-8 scale-95 origin-left" />
+                            <div
+                                key={idx}
+                                className="bg-white rounded-xl border border-zinc-200 shadow-sm p-5"
+                            >
+                                <div className="flex justify-between items-start mb-4">
+
+                                    <div>
+                                        <p className="font-medium text-zinc-800 truncate max-w-xs">
+                                            {file.id.split("/").pop()}
+                                        </p>
+
+                                        <p className="text-xs text-zinc-500 mt-1">
+
+                                            Uploaded • {formatDate(file.created_at)}
+                                        </p>
+                                    </div>
+
+                                    <span className="px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                                        {file.format?.toUpperCase() || "AUDIO"}
+                                    </span>
+
+                                </div>
+                                <AudioPlayer
+                                    src={file.url}
+                                    showJumpControls={false}
+                                    autoPlayAfterSrcChange={false}
+                                    customAdditionalControls={[]}
+                                    customVolumeControls={['VOLUME']}
+                                    layout="horizontal"
+                                    className="w-full"
+                                />
                             </div>
                         ))}
                     </div>

@@ -1,0 +1,31 @@
+.rhap_container {
+    background: #ffffff;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+.rhap_progress-filled {
+    background: #008740;
+}
+
+.rhap_progress-indicator {
+    background: #008740;
+}
+
+.rhap_volume-filled {
+    background: #008740;
+}
+
+.rhap_volume-indicator {
+    background: #008740;
+}
+
+.rhap_play-pause-button {
+    color: #008740;
+}
+
+.rhap_time {
+    color: #555;
+    font-size: 12px;
+}

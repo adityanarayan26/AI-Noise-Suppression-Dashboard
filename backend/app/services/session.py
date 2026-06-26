@@ -1,4 +1,5 @@
 import datetime
+from typing import Optional, List
 
 # In-memory store for active metrics
 current_metrics = {
@@ -25,10 +26,10 @@ def update_metrics(
     noise_score: int,
     voice_clarity: int,
     audio_quality: int,
-    noise_class: str | None = None,
-    snr_db: float | None = None,
-    speech_presence: bool | None = None,
-    waveform_bars: list[int] | None = None,
+    noise_class: Optional[str] = None,
+    snr_db: Optional[float] = None,
+    speech_presence: Optional[bool] = None,
+    waveform_bars: Optional[List[int]] = None,
 ):
     global current_metrics
     current_metrics["noise_score"] = noise_score

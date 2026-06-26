@@ -30,6 +30,10 @@
   --brand-800: #003d1d;
   --brand-900: #001e0d;
 
+  /* Text */
+  --app-text: #063018;
+  --app-text-muted: #1e5c3d;
+
   /* Main background */
   --app-bg: #a4d2b85f;
 

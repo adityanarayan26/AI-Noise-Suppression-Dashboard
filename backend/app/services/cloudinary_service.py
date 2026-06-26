@@ -1,10 +1,13 @@
 import os
+from pathlib import Path
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from the project root (2 levels up: services/ → app/ → backend/ → project root)
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Initialize Cloudinary if credentials are provided
 if os.getenv("CLOUDINARY_CLOUD_NAME"):
@@ -46,6 +49,7 @@ class CloudinaryService:
             )
             
             files = []
+
             for item in response.get("resources", []):
                 files.append({
                     "id": item.get("public_id"),
@@ -53,6 +57,12 @@ class CloudinaryService:
                     "created_at": item.get("created_at"),
                     "format": item.get("format")
                 })
+
+            files.sort(
+                key=lambda x: x["created_at"],
+                reverse=True
+            )
+
             return files
         except Exception as e:
             print(f"Cloudinary fetch error: {e}")
